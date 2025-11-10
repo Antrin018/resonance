@@ -382,24 +382,25 @@ export default function ParticipantPage() {
 
       {/* Main Content */}
       <main className="relative z-10 flex flex-1 gap-6 p-6">
-        {/* Left Panel - Song Requests */}
-        <div className="w-104 shrink-0">
-          <div className="rounded-3xl border border-white/10 bg-black/40 p-6 shadow-2xl backdrop-blur-xl">
-            <div className="mb-6">
+        {/* Left Panel - Song Requests & Search */}
+        <div className="w-96 shrink-0 space-y-6">
+          {/* Song Requests */}
+           <div className="flex h-[45vh] flex-col rounded-3xl border border-white/10 bg-black/40 p-6 shadow-2xl backdrop-blur-xl">
+             <div className="mb-4 shrink-0">
               <h2 className="text-lg font-semibold text-white">Song Requests</h2>
               <p className="text-sm text-white/50">
                 Suggestions from you and other participants
               </p>
             </div>
 
-            <div className="max-h-[calc(100vh-16rem)] space-y-3 overflow-y-auto pr-2">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-2">
               {loadingRequests ? (
                 <div className="rounded-2xl border border-white/10 bg-black/30 p-4 text-center text-sm text-white/50">
                   Loading requests…
                 </div>
               ) : songRequests.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-white/15 bg-black/30 p-4 text-center text-sm text-white/40">
-                  No song requests yet. Search for songs on the right to raise a request.
+                  No song requests yet. Search below to raise a request.
                 </div>
               ) : (
                  songRequests.map((request) => {
@@ -435,7 +436,7 @@ export default function ParticipantPage() {
                        key={request.id}
                        className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/40 p-4 backdrop-blur-sm"
                      >
-                       <div className="space-y-1">
+                       <div className="flex-1 space-y-1">
                          <p className="text-sm font-semibold text-white">{request.song_name}</p>
                          <p className="text-xs uppercase tracking-wide text-white/40">
                            {request.artist || "Unknown Artist"}
@@ -445,7 +446,7 @@ export default function ParticipantPage() {
                          type="button"
                          onClick={handleDeleteRequest}
                          disabled={isDeleting}
-                         className="flex h-8 w-8 items-center justify-center rounded-full border border-red-500/40 bg-red-500/10 text-red-300 transition-all hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-red-500/40 bg-red-500/10 text-red-300 transition-all hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
                          title="Delete request"
                        >
                          {isDeleting ? (
@@ -460,26 +461,23 @@ export default function ParticipantPage() {
               )}
             </div>
 
-            {requestError && (
-              <div className="mt-4 rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
-                {requestError}
-              </div>
-            )}
+             {requestError && (
+               <div className="mt-4 shrink-0 rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
+                 {requestError}
+               </div>
+             )}
           </div>
-        </div>
 
-        {/* Right Panel - Search and Setlist */}
-        <div className="flex min-w-[calc(100%-26rem)] flex-1 flex-col gap-6">
-          {/* Search Songs Section */}
-          <div className="rounded-3xl border border-white/10 bg-black/40 p-6 shadow-2xl backdrop-blur-xl">
+          {/* Search Songs */}
+          <div className="flex flex-col rounded-3xl border border-white/10 bg-black/40 p-6 shadow-2xl backdrop-blur-xl">
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-white">Search Songs</h2>
                 <p className="text-sm text-white/50">
-                  Discover tracks to request or share inspiration
+                  Request tracks to the host
                 </p>
               </div>
-              <p className="text-xs uppercase tracking-wide text-white/40">Powered by Spotify</p>
+              <p className="text-xs uppercase tracking-wide text-white/40">Spotify</p>
             </div>
 
             <form
@@ -499,9 +497,9 @@ export default function ParticipantPage() {
               <button
                 type="submit"
                 disabled={!searchQuery.trim() || isSearching}
-                className="flex items-center gap-2 rounded-xl bg-linear-to-r from-purple-600 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-md transition-all hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-xl bg-linear-to-r from-purple-600 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-md transition-all hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {isSearching ? "Searching..." : "Search"}
+                {isSearching ? "..." : "Search"}
               </button>
             </form>
 
@@ -511,14 +509,14 @@ export default function ParticipantPage() {
               </div>
             )}
 
-            <div className="max-h-96 space-y-3 overflow-y-auto pr-1">
+            <div className="max-h-80 space-y-3 overflow-y-auto pr-1">
               {isSearching && searchResults.length === 0 ? (
                 <div className="rounded-xl border border-white/10 bg-black/40 p-4 text-center text-white/60">
                   Searching…
                 </div>
               ) : searchResults.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-white/15 bg-black/30 p-4 text-center text-sm text-white/40">
-                  Search for a song to raise a request to the host.
+                  Search for a song to raise a request.
                 </div>
               ) : (
                 searchResults.map((track) => {
@@ -628,9 +626,11 @@ export default function ParticipantPage() {
               )}
             </div>
           </div>
+        </div>
 
-          {/* Live Setlist Section */}
-           <div className="flex-1 rounded-3xl border border-white/10 bg-linear-to-br from-white/5 via-black/70 to-white/5 p-6 shadow-2xl backdrop-blur-xl">
+        {/* Right Panel - Live Setlist */}
+        <div className="flex flex-1 flex-col">
+          <div className="flex-1 rounded-3xl border border-white/10 bg-linear-to-br from-white/5 via-black/70 to-white/5 p-6 shadow-2xl backdrop-blur-xl">
             <div className="flex items-center justify-between border-b border-white/10 pb-4">
               <div>
                 <h3 className="text-xl font-semibold text-white">Live Setlist</h3>
@@ -640,10 +640,18 @@ export default function ParticipantPage() {
               </div>
             </div>
 
-             <div className="mt-4 max-h-[calc(100vh-24rem)] space-y-3 overflow-y-auto pr-2">
+            <div className="mt-4 max-h-[calc(100vh-12rem)] space-y-3 overflow-y-auto pr-2">
               {queuedTracks.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-white/15 bg-black/30 p-6 text-center text-sm text-white/40">
-                  The host hasn&apos;t added any songs yet. Sit tight and enjoy the vibe!
+                <div className="flex h-full items-center justify-center">
+                  <div className="text-center">
+                    <div className="mb-4 inline-flex rounded-full bg-purple-500/20 p-8">
+                      <Music className="text-purple-400" size={64} />
+                    </div>
+                    <h3 className="mb-2 text-2xl font-bold text-white">No Songs Yet</h3>
+                    <p className="text-white/50">
+                      The host hasn&apos;t added any songs yet. Sit tight and enjoy the vibe!
+                    </p>
+                  </div>
                 </div>
               ) : (
                 queuedTracks.map((track) => {
