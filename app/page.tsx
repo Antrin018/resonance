@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Plus, LogIn } from "lucide-react";
 import { useMemo } from "react";
@@ -27,6 +27,8 @@ type Particle = {
 };
 
 export default function Home() {
+  const router = useRouter();
+
   const { width, height } = useMemo(() => {
     if (typeof window !== "undefined") {
       return { width: window.innerWidth, height: window.innerHeight };
@@ -89,7 +91,7 @@ export default function Home() {
       {/* Main content */}
       <main className="relative z-10 flex flex-col items-center justify-center px-6 text-center">
         <div className="relative mb-6">
-          <h1 className="font-[family-name:var(--font-orbitron)] text-7xl font-bold tracking-tight text-white md:text-8xl lg:text-9xl">
+          <h1 className="font-(family-name:--font-orbitron) text-7xl font-bold tracking-tight text-white md:text-8xl lg:text-9xl">
             Resonance
           </h1>
           <div className="mx-auto mt-4 h-1 w-3/5 rounded-full bg-linear-to-r from-purple-600 via-blue-600 to-purple-600" />
@@ -106,56 +108,54 @@ export default function Home() {
         {/* CTA Buttons */}
         <div className="flex flex-col gap-4 sm:flex-row">
           {/* Create Session Button */}
-          <Link href="/jam">
-            <motion.button
-              className="group relative overflow-hidden rounded-full bg-linear-to-r from-purple-600 to-blue-600 px-8 py-4 text-lg font-semibold text-white shadow-lg transition-all"
-              whileHover={{ scale: 1.02, boxShadow: "0 0 20px rgba(139, 92, 246, 0.4)" }}
-              whileTap={{ scale: 0.98 }}
-              transition={{ duration: 0.2 }}
-            >
-              <motion.span
-                className="absolute inset-0 bg-linear-to-r from-purple-700 to-blue-700"
-                initial={{ x: "-100%" }}
-                whileHover={{ x: "0%" }}
-                transition={{ duration: 0.3 }}
-              />
-              <span className="relative flex items-center gap-2">
-                <motion.div
-                  animate={{ rotate: [0, 90, 0] }}
-                  transition={{ duration: 2, repeat: Infinity }}
-                >
-                  <Plus size={20} />
-                </motion.div>
-                Create a jam session
-              </span>
-            </motion.button>
-          </Link>
+          <motion.button
+            onClick={() => router.push("/jam?action=create")}
+            className="group relative overflow-hidden rounded-full bg-linear-to-r from-purple-600 to-blue-600 px-8 py-4 text-lg font-semibold text-white shadow-lg transition-all"
+            whileHover={{ scale: 1.02, boxShadow: "0 0 20px rgba(139, 92, 246, 0.4)" }}
+            whileTap={{ scale: 0.98 }}
+            transition={{ duration: 0.2 }}
+          >
+            <motion.span
+              className="absolute inset-0 bg-linear-to-r from-purple-700 to-blue-700"
+              initial={{ x: "-100%" }}
+              whileHover={{ x: "0%" }}
+              transition={{ duration: 0.3 }}
+            />
+            <span className="relative flex items-center gap-2">
+              <motion.div
+                animate={{ rotate: [0, 90, 0] }}
+                transition={{ duration: 2, repeat: Infinity }}
+              >
+                <Plus size={20} />
+              </motion.div>
+              Create a jam session
+            </span>
+          </motion.button>
 
           {/* Join Session Button */}
-          <Link href="/jam">
-            <motion.button
-              className="group relative overflow-hidden rounded-full border-2 border-zinc-700 bg-zinc-900/50 px-8 py-4 text-lg font-semibold text-white backdrop-blur-sm transition-all hover:border-purple-500"
-              whileHover={{ scale: 1.02, borderColor: "rgb(168, 85, 247)" }}
-              whileTap={{ scale: 0.98 }}
-              transition={{ duration: 0.2 }}
-            >
-              <motion.span
-                className="absolute inset-0 bg-linear-to-r from-purple-600/20 to-blue-600/20"
-                initial={{ x: "-100%" }}
-                whileHover={{ x: "0%" }}
-                transition={{ duration: 0.3 }}
-              />
-              <span className="relative flex items-center gap-2">
-                <motion.div
-                  animate={{ x: [0, 5, 0] }}
-                  transition={{ duration: 1.5, repeat: Infinity }}
-                >
-                  <LogIn size={20} />
-                </motion.div>
-                Join a jam session
-              </span>
-            </motion.button>
-          </Link>
+          <motion.button
+            onClick={() => router.push("/jam?action=join")}
+            className="group relative overflow-hidden rounded-full border-2 border-zinc-700 bg-zinc-900/50 px-8 py-4 text-lg font-semibold text-white backdrop-blur-sm transition-all hover:border-purple-500"
+            whileHover={{ scale: 1.02, borderColor: "rgb(168, 85, 247)" }}
+            whileTap={{ scale: 0.98 }}
+            transition={{ duration: 0.2 }}
+          >
+            <motion.span
+              className="absolute inset-0 bg-linear-to-r from-purple-600/20 to-blue-600/20"
+              initial={{ x: "-100%" }}
+              whileHover={{ x: "0%" }}
+              transition={{ duration: 0.3 }}
+            />
+            <span className="relative flex items-center gap-2">
+              <motion.div
+                animate={{ x: [0, 5, 0] }}
+                transition={{ duration: 1.5, repeat: Infinity }}
+              >
+                <LogIn size={20} />
+              </motion.div>
+              Join a jam session
+            </span>
+          </motion.button>
         </div>
 
         {/* Feature tags */}
