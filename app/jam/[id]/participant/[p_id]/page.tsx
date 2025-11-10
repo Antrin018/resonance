@@ -52,6 +52,7 @@ type SongRequest = {
   id: string;
   song_name: string;
   artist: string;
+  status: string;
 };
 
 export default function ParticipantPage() {
@@ -112,7 +113,7 @@ export default function ParticipantPage() {
       try {
         const { data, error } = await supabase
           .from("requests")
-          .select("id, song_name, artist")
+          .select("id, song_name, artist, status")
           .eq("jam_id", jamId)
           .order("id", { ascending: true });
 
@@ -123,6 +124,7 @@ export default function ParticipantPage() {
             id: item.id,
             song_name: item.song_name,
             artist: item.artist,
+            status: item.status ?? "pending",
           }))
         );
       } catch (error) {
@@ -441,6 +443,17 @@ export default function ParticipantPage() {
                          <p className="text-xs uppercase tracking-wide text-white/40">
                            {request.artist || "Unknown Artist"}
                          </p>
+                         <span
+                           className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                             request.status === "accepted"
+                               ? "border border-green-500/40 bg-green-500/10 text-green-200"
+                               : request.status === "rejected"
+                               ? "border border-red-500/40 bg-red-500/10 text-red-200"
+                               : "border border-yellow-500/40 bg-yellow-500/10 text-yellow-200"
+                           }`}
+                         >
+                           {request.status}
+                         </span>
                        </div>
                        <button
                          type="button"
@@ -469,7 +482,7 @@ export default function ParticipantPage() {
           </div>
 
           {/* Search Songs */}
-          <div className="flex flex-col rounded-3xl border border-white/10 bg-black/40 p-6 shadow-2xl backdrop-blur-xl">
+           <div className="flex flex-col rounded-3xl border border-white/10 bg-black/40 p-6 shadow-2xl backdrop-blur-xl">
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-white">Search Songs</h2>
@@ -524,7 +537,7 @@ export default function ParticipantPage() {
                   const artists = track.artists.map((artist) => artist.name).join(", ");
                   const trackKey = track.id ?? track.name.trim().toLowerCase();
                   const isRequesting = requestingTrackIds.includes(trackKey);
-                  const alreadyRequested = songRequests.some(
+                    const alreadyRequested = songRequests.some(
                     (request) =>
                       request.song_name.toLowerCase() === track.name.toLowerCase() &&
                       request.artist.toLowerCase() === artists.toLowerCase()
@@ -536,15 +549,15 @@ export default function ParticipantPage() {
                     setRequestingTrackIds((prev) => [...prev, trackKey]);
 
                     try {
-                      const { data, error } = await supabase
+                        const { data, error } = await supabase
                         .from("requests")
-                        .insert({
+                          .insert({
                           jam_id: jamId,
                           participant_id: participantId,
                           song_name: track.name,
                           artist: artists,
                         })
-                        .select("id, song_name, artist")
+                          .select("id, song_name, artist, status")
                         .single();
 
                       if (error) {
@@ -556,7 +569,8 @@ export default function ParticipantPage() {
                         {
                           id: data.id,
                           song_name: data.song_name,
-                          artist: data.artist,
+                            artist: data.artist,
+                            status: data.status ?? "pending",
                         },
                       ]);
                     } catch (error) {

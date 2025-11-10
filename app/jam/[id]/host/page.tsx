@@ -15,6 +15,8 @@ import {
   Download,
   Loader2,
   Trash2,
+  CheckCircle,
+  XCircle,
 } from "lucide-react";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { QRCodeSVG } from "qrcode.react";
@@ -56,6 +58,15 @@ type StageTrack = {
   lookupKey?: string;
   lyrics?: string | null;
   isCurrent?: boolean;
+};
+
+type SongRequest = {
+  id: string;
+  jam_id: string;
+  participant_id: string;
+  song_name: string;
+  artist: string;
+  status: string;
 };
 
 const createLookupKey = (name?: string | null, artists: string[] = []) => {
@@ -101,6 +112,8 @@ export default function HostPage() {
   >({});
   const [savingLyricsId, setSavingLyricsId] = useState<string | null>(null);
   const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
+  const [songRequests, setSongRequests] = useState<SongRequest[]>([]);
+  const [processingRequestIds, setProcessingRequestIds] = useState<string[]>([]);
 
   const participantLink = useMemo(
     () => `http://localhost:3000/jam?action=join&&jamID=${jamId}`,
@@ -137,6 +150,23 @@ export default function HostPage() {
       console.error("Failed to fetch jam session:", error);
     } finally {
       setLoading(false);
+    }
+  }, [jamId]);
+
+  const fetchSongRequests = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from("requests")
+        .select("*")
+        .eq("jam_id", jamId)
+        .eq("status", "pending")
+        .order("id", { ascending: true });
+
+      if (error) throw error;
+
+      setSongRequests(data || []);
+    } catch (error) {
+      console.error("Failed to fetch song requests:", error);
     }
   }, [jamId]);
 
@@ -242,7 +272,8 @@ export default function HostPage() {
   useEffect(() => {
     fetchJamSession();
     fetchSongsForJam();
-  }, [fetchJamSession, fetchSongsForJam]);
+    fetchSongRequests();
+  }, [fetchJamSession, fetchSongsForJam, fetchSongRequests]);
 
   const handleCopySessionId = () => {
     navigator.clipboard.writeText(jamId);
@@ -562,6 +593,79 @@ export default function HostPage() {
     }
   };
 
+  const handleAcceptRequest = async (request: SongRequest) => {
+    if (processingRequestIds.includes(request.id)) {
+      return;
+    }
+
+    setProcessingRequestIds((prev) => [...prev, request.id]);
+
+    try {
+      // Add the song to the songs table
+    const { error } = await supabase
+        .from("songs")
+        .insert({
+          jam_id: jamId,
+          song_name: request.song_name,
+          artist: request.artist,
+          current: false,
+          request: false,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      // Update request status to accepted
+      const { error: updateError } = await supabase
+        .from("requests")
+        .update({ status: "accepted" })
+        .eq("id", request.id);
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      // Remove from local state
+      setSongRequests((prev) => prev.filter((r) => r.id !== request.id));
+
+      // Refresh the songs list
+      await fetchSongsForJam();
+    } catch (error) {
+      console.error("Failed to accept song request:", error);
+      setAddSongError("Unable to accept song request. Please try again.");
+    } finally {
+      setProcessingRequestIds((prev) => prev.filter((id) => id !== request.id));
+    }
+  };
+
+  const handleDeclineRequest = async (request: SongRequest) => {
+    if (processingRequestIds.includes(request.id)) {
+      return;
+    }
+
+    setProcessingRequestIds((prev) => [...prev, request.id]);
+
+    try {
+      const { error } = await supabase
+        .from("requests")
+        .update({ status: "rejected" })
+        .eq("id", request.id);
+
+      if (error) {
+        throw error;
+      }
+
+      // Remove from local state
+      setSongRequests((prev) => prev.filter((r) => r.id !== request.id));
+    } catch (error) {
+      console.error("Failed to decline song request:", error);
+      setAddSongError("Unable to decline song request. Please try again.");
+    } finally {
+      setProcessingRequestIds((prev) => prev.filter((id) => id !== request.id));
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-black">
@@ -839,7 +943,6 @@ export default function HostPage() {
                     </div>
                   )}
                 </div>
-
                 </div>
             </div>
           </div>
@@ -847,7 +950,7 @@ export default function HostPage() {
 
         {/* Center Panel - Main Stage */}
         <div className="flex flex-1 flex-col gap-6">
-          {/* Video/Audio Stage */}
+          {/* Video/Audio Stage - Jam Setlist */}
           <div className="flex-1 rounded-3xl border border-white/10 bg-linear-to-br from-white/5 via-black/70 to-white/5 p-6 shadow-2xl backdrop-blur-xl">
             {queuedTracks.length === 0 ? (
               <div className="flex h-full items-center justify-center text-center">
@@ -858,9 +961,9 @@ export default function HostPage() {
                 <h3 className="mb-2 text-2xl font-bold text-white">Ready to Jam</h3>
                 <p className="text-white/50">
                     Search for songs on the left to start building your setlist.
-                </p>
+                  </p>
+                </div>
               </div>
-            </div>
             ) : (
               <div className="flex h-full flex-col">
                 <div className="flex items-center justify-between border-b border-white/10 pb-4">
@@ -869,7 +972,7 @@ export default function HostPage() {
                     <p className="text-sm text-white/50">
                       {queuedTracks.length} {queuedTracks.length === 1 ? "song" : "songs"} queued
                     </p>
-          </div>
+                  </div>
                   <div className="flex items-center gap-3">
                     <button
                       onClick={handlePreviousTrack}
@@ -882,9 +985,9 @@ export default function HostPage() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 19V5m13.5 14L9 12l9.5-7" />
                       </svg>
                     </button>
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
+                    <motion.button
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
                       onClick={handlePlayPause}
                       className="flex h-12 w-12 items-center justify-center rounded-full bg-linear-to-r from-purple-600 to-blue-600 text-white shadow-lg shadow-purple-500/50 transition-all hover:shadow-purple-500/70"
                       title={isPlaying ? "Pause" : "Play"}
@@ -952,81 +1055,81 @@ export default function HostPage() {
                             </p>
                           </div>
 
-                        <div className="flex items-center gap-2">
-                          <motion.button
-                            whileHover={{ scale: 1.03 }}
-                            whileTap={{ scale: 0.97 }}
-                            type="button"
-                            onClick={() => handleToggleLyrics(track)}
-                            className="flex items-center gap-2 rounded-full bg-linear-to-r from-purple-600 to-blue-600 px-3 py-1 text-xs font-semibold text-white shadow-md shadow-purple-500/40 transition-all hover:shadow-purple-500/70"
-                          >
-                            {expandedTrackId === track.id ? "Hide Lyrics" : "Set Lyrics"}
-              </motion.button>
-              <button
-                            type="button"
-                            onClick={() => handleRemoveTrackFromJam(track)}
-                            disabled={isDeleting}
-                            className="flex h-9 w-9 items-center justify-center rounded-full border border-red-500/40 bg-red-500/10 text-red-300 transition-all hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
-                            title="Remove from jam"
-                          >
-                            {isDeleting ? (
-                              <Loader2 size={16} className="animate-spin" />
-                            ) : (
-                              <Trash2 size={16} />
-                            )}
-                            <span className="sr-only">Remove song</span>
-              </button>
-                        </div>
-                      </div>
-
-                      {expandedTrackId === track.id && (
-                        <div className="space-y-4 rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <div className="flex items-center justify-between">
-                            <p className="text-sm font-semibold text-white">Lyrics</p>
-                          </div>
-
-                          <textarea
-                            value={lyricsMap[track.id] ?? track.lyrics ?? ""}
-                            onChange={(event) =>
-                              setLyricsMap((prev) => ({ ...prev, [track.id]: event.target.value }))
-                            }
-                            rows={6}
-                            placeholder="Paste lyrics here..."
-                            className="h-48 w-full resize-none rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white/80 placeholder-white/30 focus:outline-none"
-                          />
-                          <div className="flex items-center justify-between">
-                            <div className="text-xs text-white/60">
-                              {(lyricsMap[track.id] ?? "").length} characters
-                            </div>
+                          <div className="flex items-center gap-2">
+                            <motion.button
+                              whileHover={{ scale: 1.03 }}
+                              whileTap={{ scale: 0.97 }}
+                              type="button"
+                              onClick={() => handleToggleLyrics(track)}
+                              className="flex items-center gap-2 rounded-full bg-linear-to-r from-purple-600 to-blue-600 px-3 py-1 text-xs font-semibold text-white shadow-md shadow-purple-500/40 transition-all hover:shadow-purple-500/70"
+                            >
+                              {expandedTrackId === track.id ? "Hide Lyrics" : "Set Lyrics"}
+                            </motion.button>
                             <button
                               type="button"
-                              onClick={() => handleSaveLyrics(track)}
-                              disabled={savingLyricsId === track.id}
-                              className="flex items-center gap-2 rounded-full bg-linear-to-r from-purple-600 to-blue-600 px-4 py-1.5 text-xs font-semibold text-white shadow-md shadow-purple-500/40 transition-all hover:shadow-purple-500/60 disabled:cursor-not-allowed disabled:opacity-60"
+                              onClick={() => handleRemoveTrackFromJam(track)}
+                              disabled={isDeleting}
+                              className="flex h-9 w-9 items-center justify-center rounded-full border border-red-500/40 bg-red-500/10 text-red-300 transition-all hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                              title="Remove from jam"
                             >
-                              {savingLyricsId === track.id ? (
-                                <>
-                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  Saving...
-                                </>
+                              {isDeleting ? (
+                                <Loader2 size={16} className="animate-spin" />
                               ) : (
-                                "Add Lyrics"
+                                <Trash2 size={16} />
                               )}
-              </button>
-            </div>
-                          {lyricsFeedback[track.id] && (
-                            <p
-                              className={`text-xs ${
-                                lyricsFeedback[track.id]?.type === "success"
-                                  ? "text-green-300"
-                                  : "text-red-300"
-                              }`}
-                            >
-                              {lyricsFeedback[track.id]?.message}
-                            </p>
-                          )}
+                              <span className="sr-only">Remove song</span>
+                            </button>
+                          </div>
                         </div>
-                      )}
+
+                        {expandedTrackId === track.id && (
+                          <div className="space-y-4 rounded-2xl border border-white/10 bg-black/30 p-4">
+                            <div className="flex items-center justify-between">
+                              <p className="text-sm font-semibold text-white">Lyrics</p>
+                            </div>
+
+                            <textarea
+                              value={lyricsMap[track.id] ?? track.lyrics ?? ""}
+                              onChange={(event) =>
+                                setLyricsMap((prev) => ({ ...prev, [track.id]: event.target.value }))
+                              }
+                              rows={6}
+                              placeholder="Paste lyrics here..."
+                              className="h-48 w-full resize-none rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white/80 placeholder-white/30 focus:outline-none"
+                            />
+                            <div className="flex items-center justify-between">
+                              <div className="text-xs text-white/60">
+                                {(lyricsMap[track.id] ?? "").length} characters
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleSaveLyrics(track)}
+                                disabled={savingLyricsId === track.id}
+                                className="flex items-center gap-2 rounded-full bg-linear-to-r from-purple-600 to-blue-600 px-4 py-1.5 text-xs font-semibold text-white shadow-md shadow-purple-500/40 transition-all hover:shadow-purple-500/60 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {savingLyricsId === track.id ? (
+                                  <>
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    Saving...
+                                  </>
+                                ) : (
+                                  "Add Lyrics"
+                                )}
+                              </button>
+                            </div>
+                            {lyricsFeedback[track.id] && (
+                              <p
+                                className={`text-xs ${
+                                  lyricsFeedback[track.id]?.type === "success"
+                                    ? "text-green-300"
+                                    : "text-red-300"
+                                }`}
+                              >
+                                {lyricsFeedback[track.id]?.message}
+                              </p>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -1035,6 +1138,85 @@ export default function HostPage() {
             )}
           </div>
 
+          {/* Song Requests Section */}
+          <div className="rounded-3xl border border-white/10 bg-linear-to-br from-white/5 via-black/70 to-white/5 p-6 shadow-2xl backdrop-blur-xl">
+            <div className="mb-4 flex items-center justify-between border-b border-white/10 pb-4">
+              <div className="flex items-center gap-2">
+                <Music className="text-blue-400" size={20} />
+                <h3 className="text-xl font-semibold text-white">Song Requests</h3>
+              </div>
+              <p className="text-sm text-white/50">
+                {songRequests.length} pending {songRequests.length === 1 ? "request" : "requests"}
+              </p>
+            </div>
+
+            <div className="max-h-96 space-y-3 overflow-y-auto pr-2">
+              {songRequests.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-white/15 bg-black/30 p-8 text-center">
+                  <div className="mb-3 inline-flex rounded-full bg-blue-500/20 p-4">
+                    <Music className="text-blue-400" size={32} />
+                  </div>
+                  <p className="text-sm text-white/40">No song requests yet</p>
+                  <p className="mt-1 text-xs text-white/30">
+                    Participants can request songs to be added to the setlist
+                  </p>
+                </div>
+              ) : (
+                songRequests.map((request) => {
+                  const isProcessing = processingRequestIds.includes(request.id);
+                  
+                  return (
+                    <div
+                      key={request.id}
+                      className="flex items-center gap-4 rounded-2xl border border-white/10 bg-black/40 p-4 backdrop-blur transition-all hover:border-white/20"
+                    >
+                      <div className="flex-1">
+                        <p className="text-base font-semibold text-white">{request.song_name}</p>
+                        <p className="text-sm text-white/60">{request.artist || "Unknown Artist"}</p>
+                        <p className="mt-1 text-xs text-white/40">
+                          Requested by participant
+                        </p>
+          </div>
+
+                      <div className="flex items-center gap-2">
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                          type="button"
+                          onClick={() => handleAcceptRequest(request)}
+                          disabled={isProcessing}
+                          className="flex h-10 w-10 items-center justify-center rounded-full border border-green-500/40 bg-green-500/20 text-green-300 transition-all hover:bg-green-500/30 disabled:cursor-not-allowed disabled:opacity-60"
+                          title="Accept request"
+                        >
+                          {isProcessing ? (
+                            <Loader2 size={18} className="animate-spin" />
+                          ) : (
+                            <CheckCircle size={18} />
+                )}
+              </motion.button>
+
+                        <motion.button
+                          whileHover={{ scale: 1.05 }}
+                          whileTap={{ scale: 0.95 }}
+                          type="button"
+                          onClick={() => handleDeclineRequest(request)}
+                          disabled={isProcessing}
+                          className="flex h-10 w-10 items-center justify-center rounded-full border border-red-500/40 bg-red-500/20 text-red-300 transition-all hover:bg-red-500/30 disabled:cursor-not-allowed disabled:opacity-60"
+                          title="Decline request"
+                        >
+                          {isProcessing ? (
+                            <Loader2 size={18} className="animate-spin" />
+                          ) : (
+                            <XCircle size={18} />
+                          )}
+                        </motion.button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Right Panel - Session Info & Settings */}
