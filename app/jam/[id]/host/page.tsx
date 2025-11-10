@@ -55,6 +55,7 @@ type StageTrack = {
   spotifyTrackId?: string;
   lookupKey?: string;
   lyrics?: string | null;
+  isCurrent?: boolean;
 };
 
 const createLookupKey = (name?: string | null, artists: string[] = []) => {
@@ -99,6 +100,7 @@ export default function HostPage() {
     Record<string, { type: "success" | "error"; message: string } | null>
   >({});
   const [savingLyricsId, setSavingLyricsId] = useState<string | null>(null);
+  const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
 
   const participantLink = useMemo(
     () => `http://localhost:3000/jam?action=join&&jamID=${jamId}`,
@@ -142,7 +144,7 @@ export default function HostPage() {
     try {
       const { data, error } = await supabase
         .from("songs")
-        .select("id, song_name, artist, lyrics")
+        .select("id, song_name, artist, lyrics, current")
         .eq("jam_id", jamId)
         .eq("request", false);
 
@@ -151,6 +153,9 @@ export default function HostPage() {
       if (!data || data.length === 0) {
         setQueuedTracks([]);
         setAddedTrackKeys(new Set());
+        setLyricsMap({});
+        setCurrentTrackId(null);
+        setIsPlaying(false);
         return;
       }
 
@@ -171,6 +176,7 @@ export default function HostPage() {
             artists: artistsFromDb,
             lookupKey: songLookupKey,
             lyrics: song.lyrics ?? null,
+            isCurrent: Boolean(song.current),
           };
 
           try {
@@ -197,6 +203,8 @@ export default function HostPage() {
                 spotifyUrl: match.external_urls?.spotify,
                 spotifyTrackId: match.id,
                 lookupKey: createLookupKey(match.name ?? songName, matchedArtists),
+                lyrics: song.lyrics ?? null,
+                isCurrent: Boolean(song.current),
               };
             }
           } catch (spotifyError) {
@@ -211,6 +219,11 @@ export default function HostPage() {
       );
 
       setQueuedTracks(tracks);
+      const currentFromDb = tracks.find((track) => track.isCurrent);
+      setCurrentTrackId(currentFromDb?.id ?? null);
+      if (currentFromDb) {
+        setIsPlaying((prev) => prev || true);
+      }
       setAddedTrackKeys(buildKeySet(tracks));
       setLyricsMap(
         tracks.reduce<Record<string, string>>((acc, track) => {
@@ -255,6 +268,97 @@ export default function HostPage() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  const applyCurrentTrackLocally = useCallback((newCurrentId: string | null) => {
+    setQueuedTracks((prev) =>
+      prev.map((track) => {
+        const shouldBeCurrent = track.id === newCurrentId;
+        if (!!track.isCurrent === shouldBeCurrent) {
+          return track;
+        }
+        return { ...track, isCurrent: shouldBeCurrent };
+      })
+    );
+    setCurrentTrackId(newCurrentId);
+  }, []);
+
+  const updateCurrentTrack = useCallback(
+    async (newCurrentId: string | null) => {
+      applyCurrentTrackLocally(newCurrentId);
+
+      try {
+        await supabase.from("songs").update({ current: false }).eq("jam_id", jamId);
+
+        if (newCurrentId) {
+          await supabase.from("songs").update({ current: true }).eq("id", newCurrentId);
+        }
+      } catch (error) {
+        console.error("Failed to update current track:", error);
+      }
+    },
+    [applyCurrentTrackLocally, jamId]
+  );
+
+  const handlePlayPause = async () => {
+    if (!queuedTracks.length) {
+      return;
+    }
+
+    if (!isPlaying) {
+      const targetTrackId = currentTrackId ?? queuedTracks[0]?.id ?? null;
+      if (targetTrackId) {
+        await updateCurrentTrack(targetTrackId);
+      }
+      setIsPlaying(true);
+    } else {
+      setIsPlaying(false);
+    }
+  };
+
+  const handleNextTrack = async () => {
+    if (!queuedTracks.length) {
+      return;
+    }
+
+    const currentIndex = currentTrackId
+      ? queuedTracks.findIndex((track) => track.id === currentTrackId)
+      : -1;
+
+    if (currentIndex === -1) {
+      const firstTrack = queuedTracks[0];
+      if (firstTrack) {
+        await updateCurrentTrack(firstTrack.id);
+        setIsPlaying(true);
+      }
+      return;
+    }
+
+    if (currentIndex >= queuedTracks.length - 1) {
+      return;
+    }
+
+    const nextTrack = queuedTracks[currentIndex + 1];
+    await updateCurrentTrack(nextTrack.id);
+    setIsPlaying(true);
+  };
+
+  const handlePreviousTrack = async () => {
+    if (!queuedTracks.length) {
+      return;
+    }
+
+    const currentIndex = currentTrackId
+      ? queuedTracks.findIndex((track) => track.id === currentTrackId)
+      : -1;
+
+    if (currentIndex <= 0) {
+      return;
+    }
+
+    const previousTrack = queuedTracks[currentIndex - 1];
+    await updateCurrentTrack(previousTrack.id);
+    setIsPlaying(true);
   };
 
   const handleToggleLyrics = (track: StageTrack) => {
@@ -368,6 +472,7 @@ export default function HostPage() {
           jam_id: jamId,
           song_name: track.name,
           artist: artistsList.join(", "),
+          current: false,
           request: false,
         })
         .select("id, song_name, artist")
@@ -394,6 +499,8 @@ export default function HostPage() {
         spotifyUrl: track.external_urls?.spotify,
         spotifyTrackId: track.id,
         lookupKey: resolvedLookupKey,
+        lyrics: null,
+        isCurrent: false,
       };
 
       let updatedTracks: StageTrack[] = [];
@@ -438,6 +545,14 @@ export default function HostPage() {
         return updated;
       });
       setLyricsFeedback((prev) => ({ ...prev, [trackId]: null }));
+
+      if (trackId === currentTrackId) {
+        const nextCurrentId = updatedTracks[0]?.id ?? null;
+        await updateCurrentTrack(nextCurrentId);
+        if (!nextCurrentId) {
+          setIsPlaying(false);
+        }
+      }
     } catch (error) {
       console.error("Failed to remove song from jam:", error);
       setAddSongError("Unable to remove song from jam. Please try again.");
@@ -756,9 +871,10 @@ export default function HostPage() {
           </div>
                   <div className="flex items-center gap-3">
                     <button
-                      onClick={() => {/* TODO: handle previous track */}}
+                      onClick={handlePreviousTrack}
                       className="rounded-full border border-white/10 bg-white/5 p-2 text-white/70 transition-all hover:bg-white/10"
                       title="Previous Track"
+                      disabled={currentTrackId ? queuedTracks.findIndex((track) => track.id === currentTrackId) <= 0 : false}
                     >
                       <span className="sr-only">Previous Track</span>
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -768,34 +884,43 @@ export default function HostPage() {
               <motion.button
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
-                onClick={() => setIsPlaying(!isPlaying)}
+                      onClick={handlePlayPause}
                       className="flex h-12 w-12 items-center justify-center rounded-full bg-linear-to-r from-purple-600 to-blue-600 text-white shadow-lg shadow-purple-500/50 transition-all hover:shadow-purple-500/70"
                       title={isPlaying ? "Pause" : "Play"}
                     >
                       {isPlaying ? <Pause size={20} /> : <Play className="ml-0.5" size={20} />}
-              </motion.button>
-              <button
-                      onClick={() => {/* TODO: handle next track */}}
+                    </motion.button>
+                    <button
+                      onClick={handleNextTrack}
                       className="rounded-full border border-white/10 bg-white/5 p-2 text-white/70 transition-all hover:bg-white/10"
                       title="Next Track"
+                      disabled={
+                        currentTrackId
+                          ? queuedTracks.findIndex((track) => track.id === currentTrackId) >= queuedTracks.length - 1
+                          : queuedTracks.length <= 1
+                      }
                     >
                       <span className="sr-only">Next Track</span>
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 5v14M5.5 5l9.5 7-9.5 7" />
                       </svg>
-              </button>
+                    </button>
                   </div>
                 </div>
 
                 <div className="mt-4 flex-1 space-y-3 overflow-y-auto pr-2">
                   {queuedTracks.map((track) => {
                     const isDeleting = deletingTrackIds.includes(track.id);
+                    const isActive = track.id === currentTrackId;
+                    const cardClassName = [
+                      "space-y-4 rounded-2xl border p-4 backdrop-blur transition-shadow",
+                      isActive
+                        ? "border-purple-500 bg-linear-to-r from-purple-600/20 to-blue-600/15 shadow-[0_0_35px_rgba(168,85,247,0.35)]"
+                        : "border-white/10 bg-black/40",
+                    ].join(" ");
 
                     return (
-                      <div
-                        key={track.id}
-                        className="space-y-4 rounded-2xl border border-white/10 bg-black/40 p-4 backdrop-blur"
-                      >
+                      <div key={track.id} className={cardClassName}>
                         <div className="flex items-center gap-4">
                           <div className="h-16 w-16 overflow-hidden rounded-xl bg-white/10">
                             {track.imageUrl ? (
@@ -835,8 +960,8 @@ export default function HostPage() {
                             className="flex items-center gap-2 rounded-full bg-linear-to-r from-purple-600 to-blue-600 px-3 py-1 text-xs font-semibold text-white shadow-md shadow-purple-500/40 transition-all hover:shadow-purple-500/70"
                           >
                             {expandedTrackId === track.id ? "Hide Lyrics" : "Set Lyrics"}
-                          </motion.button>
-                          <button
+              </motion.button>
+              <button
                             type="button"
                             onClick={() => handleRemoveTrackFromJam(track)}
                             disabled={isDeleting}
