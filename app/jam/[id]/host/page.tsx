@@ -114,6 +114,8 @@ export default function HostPage() {
   const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
   const [songRequests, setSongRequests] = useState<SongRequest[]>([]);
   const [processingRequestIds, setProcessingRequestIds] = useState<string[]>([]);
+  const [endingSession, setEndingSession] = useState(false);
+  const [endSessionError, setEndSessionError] = useState<string | null>(null);
 
   const participantLink = useMemo(
     () => `http://localhost:3000/jam?action=join&&jamID=${jamId}`,
@@ -285,6 +287,36 @@ export default function HostPage() {
     navigator.clipboard.writeText(participantLink);
     setLinkCopied(true);
     setTimeout(() => setLinkCopied(false), 2000);
+  };
+
+  const handleEndSession = async () => {
+    if (endingSession) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "End session? This will permanently delete all songs, requests, and participants for this jam."
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setEndSessionError(null);
+    setEndingSession(true);
+
+    try {
+      await supabase.from("songs").delete().eq("jam_id", jamId);
+      await supabase.from("requests").delete().eq("jam_id", jamId);
+      await supabase.from("participants").delete().eq("jam_id", jamId);
+      await supabase.from("jams").delete().eq("id", jamId);
+
+      router.push("/jam?action=create");
+    } catch (error) {
+      console.error("Failed to end session:", error);
+      setEndSessionError("Unable to end this session right now. Please try again.");
+      setEndingSession(false);
+    }
   };
 
   const handleDownloadQr = () => {
@@ -737,6 +769,7 @@ export default function HostPage() {
         <div className="mx-auto max-w-7xl px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
               <motion.button
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
@@ -746,6 +779,28 @@ export default function HostPage() {
                 <ArrowLeft size={18} />
                 Exit
               </motion.button>
+                <motion.button
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  whileHover={{ scale: endingSession ? 1 : 1.03 }}
+                  whileTap={{ scale: endingSession ? 1 : 0.97 }}
+                  onClick={handleEndSession}
+                  disabled={endingSession}
+                  className="flex items-center gap-2 rounded-xl border border-red-500/40 bg-red-500/20 px-4 py-2 text-red-100 backdrop-blur-xl transition-all hover:bg-red-500/30 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {endingSession ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      Ending…
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 size={16} />
+                      End Session
+                    </>
+                  )}
+                </motion.button>
+              </div>
 
               <div className="flex items-center gap-3">
                 <div className="rounded-xl bg-linear-to-br from-purple-500/20 to-blue-500/20 p-2 backdrop-blur-sm">
@@ -788,6 +843,11 @@ export default function HostPage() {
 
       {/* Main Content */}
       <main className="relative z-10 flex flex-1 gap-6 p-6">
+        {endSessionError && (
+          <div className="absolute left-1/2 top-4 z-20 w-full max-w-lg -translate-x-1/2 rounded-2xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200 shadow-lg backdrop-blur">
+            {endSessionError}
+          </div>
+        )}
         {/* Left Panel - Participant QR */}
         <div className="w-md shrink-0">
           <div className="rounded-3xl border border-white/10 bg-black/40 p-6 shadow-2xl backdrop-blur-xl">
@@ -825,8 +885,8 @@ export default function HostPage() {
                   >
                     <Download size={16} />
                     Download QR
-                  </button>
-                    </div>
+              </button>
+            </div>
 
                 <div className="flex h-96 flex-col gap-4 rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-sm">
                   <div className="flex items-center justify-between">
@@ -896,9 +956,9 @@ export default function HostPage() {
                               ) : (
                                 <div className="flex h-full w-full items-center justify-center text-xs text-white/50">
                                   No Art
-                                </div>
+                    </div>
                               )}
-                            </div>
+                  </div>
 
                             <div className="flex-1">
                               <p className="text-sm font-semibold text-white">{track.name}</p>
@@ -908,7 +968,7 @@ export default function HostPage() {
                               </p>
                             </div>
 
-                            <button
+                    <button
                               type="button"
                               onClick={() => handleAddTrackToJam(track)}
                               disabled={isAdded || isAdding}
@@ -930,18 +990,18 @@ export default function HostPage() {
                               ) : (
                                 <Plus size={18} />
                               )}
-                            </button>
+                    </button>
                           </div>
                         );
                       })
-                    )}
-                  </div>
+                  )}
+                </div>
 
                   {addSongError && (
                     <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
                       {addSongError}
-                    </div>
-                  )}
+                </div>
+              )}
                 </div>
                 </div>
             </div>
@@ -961,9 +1021,9 @@ export default function HostPage() {
                 <h3 className="mb-2 text-2xl font-bold text-white">Ready to Jam</h3>
                 <p className="text-white/50">
                     Search for songs on the left to start building your setlist.
-                  </p>
-                </div>
+                </p>
               </div>
+            </div>
             ) : (
               <div className="flex h-full flex-col">
                 <div className="flex items-center justify-between border-b border-white/10 pb-4">
@@ -972,7 +1032,7 @@ export default function HostPage() {
                     <p className="text-sm text-white/50">
                       {queuedTracks.length} {queuedTracks.length === 1 ? "song" : "songs"} queued
                     </p>
-                  </div>
+          </div>
                   <div className="flex items-center gap-3">
                     <button
                       onClick={handlePreviousTrack}
@@ -985,9 +1045,9 @@ export default function HostPage() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 19V5m13.5 14L9 12l9.5-7" />
                       </svg>
                     </button>
-                    <motion.button
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
                       onClick={handlePlayPause}
                       className="flex h-12 w-12 items-center justify-center rounded-full bg-linear-to-r from-purple-600 to-blue-600 text-white shadow-lg shadow-purple-500/50 transition-all hover:shadow-purple-500/70"
                       title={isPlaying ? "Pause" : "Play"}
@@ -1065,7 +1125,7 @@ export default function HostPage() {
                             >
                               {expandedTrackId === track.id ? "Hide Lyrics" : "Set Lyrics"}
                             </motion.button>
-                            <button
+              <button
                               type="button"
                               onClick={() => handleRemoveTrackFromJam(track)}
                               disabled={isDeleting}
@@ -1078,7 +1138,7 @@ export default function HostPage() {
                                 <Trash2 size={16} />
                               )}
                               <span className="sr-only">Remove song</span>
-                            </button>
+              </button>
                           </div>
                         </div>
 
@@ -1115,7 +1175,7 @@ export default function HostPage() {
                                 ) : (
                                   "Add Lyrics"
                                 )}
-                              </button>
+              </button>
                             </div>
                             {lyricsFeedback[track.id] && (
                               <p
@@ -1144,11 +1204,11 @@ export default function HostPage() {
               <div className="flex items-center gap-2">
                 <Music className="text-blue-400" size={20} />
                 <h3 className="text-xl font-semibold text-white">Song Requests</h3>
-              </div>
+            </div>
               <p className="text-sm text-white/50">
                 {songRequests.length} pending {songRequests.length === 1 ? "request" : "requests"}
               </p>
-            </div>
+          </div>
 
             <div className="max-h-96 space-y-3 overflow-y-auto pr-2">
               {songRequests.length === 0 ? (
