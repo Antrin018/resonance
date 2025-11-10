@@ -14,6 +14,7 @@ import {
   Pause,
   Download,
   Loader2,
+  Trash2,
 } from "lucide-react";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { QRCodeSVG } from "qrcode.react";
@@ -52,6 +53,22 @@ type StageTrack = {
   imageUrl?: string;
   spotifyUrl?: string;
   spotifyTrackId?: string;
+  lookupKey?: string;
+};
+
+const createLookupKey = (name?: string | null, artists: string[] = []) => {
+  const parts: string[] = [];
+  const trimmedName = name?.trim();
+  if (trimmedName) {
+    parts.push(trimmedName);
+  }
+  artists.forEach((artist) => {
+    const trimmedArtist = artist?.trim();
+    if (trimmedArtist) {
+      parts.push(trimmedArtist);
+    }
+  });
+  return parts.join(" ").toLowerCase();
 };
 
 export default function HostPage() {
@@ -74,11 +91,28 @@ export default function HostPage() {
   const [addedTrackKeys, setAddedTrackKeys] = useState<Set<string>>(new Set());
   const [addingTrackKeys, setAddingTrackKeys] = useState<string[]>([]);
   const [addSongError, setAddSongError] = useState<string | null>(null);
+  const [deletingTrackIds, setDeletingTrackIds] = useState<string[]>([]);
 
   const participantLink = useMemo(
     () => `http://localhost:3000/jam/${jamId}/participant`,
     [jamId]
   );
+
+  const buildKeySet = useCallback((tracks: StageTrack[]) => {
+    const keys = new Set<string>();
+    tracks.forEach((track) => {
+      if (track.id) {
+        keys.add(track.id);
+      }
+      if (track.lookupKey) {
+        keys.add(track.lookupKey);
+      }
+      if (track.spotifyTrackId) {
+        keys.add(track.spotifyTrackId);
+      }
+    });
+    return keys;
+  }, []);
 
   const fetchJamSession = useCallback(async () => {
     try {
@@ -101,7 +135,7 @@ export default function HostPage() {
     try {
       const { data, error } = await supabase
         .from("songs")
-        .select("id, song_name")
+        .select("id, song_name, artist")
         .eq("jam_id", jamId)
         .eq("request", false);
 
@@ -116,16 +150,24 @@ export default function HostPage() {
       const tracks: StageTrack[] = await Promise.all(
         data.map(async (song) => {
           const songName = song.song_name ?? "Untitled Song";
+          const artistsFromDb =
+            song.artist
+              ?.split(",")
+              .map((artist: string) => artist.trim())
+              .filter(Boolean) ?? [];
+          const songLookupKey = createLookupKey(songName, artistsFromDb);
+          const spotifyQuery = [songName, ...artistsFromDb].filter(Boolean).join(" ");
 
           const baseTrack: StageTrack = {
             id: song.id,
             name: songName,
-            artists: [],
+            artists: artistsFromDb,
+            lookupKey: songLookupKey,
           };
 
           try {
             const response = await fetch(
-              `/api/spotify/search?q=${encodeURIComponent(songName)}&limit=1`
+              `/api/spotify/search?q=${encodeURIComponent(spotifyQuery || songName)}&limit=1`
             );
 
             if (!response.ok) {
@@ -136,14 +178,17 @@ export default function HostPage() {
             const match: SpotifyTrack | undefined = payload?.tracks?.items?.[0];
 
             if (match) {
+              const matchedArtists =
+                match.artists?.map((artist) => artist.name) ?? artistsFromDb;
               return {
                 id: song.id,
                 name: match.name ?? songName,
-                artists: match.artists?.map((artist) => artist.name) ?? [],
+                artists: matchedArtists,
                 albumName: match.album?.name,
                 imageUrl: match.album?.images?.[0]?.url,
                 spotifyUrl: match.external_urls?.spotify,
                 spotifyTrackId: match.id,
+                lookupKey: createLookupKey(match.name ?? songName, matchedArtists),
               };
             }
           } catch (spotifyError) {
@@ -158,22 +203,11 @@ export default function HostPage() {
       );
 
       setQueuedTracks(tracks);
-
-      const keys = new Set<string>();
-      tracks.forEach((track) => {
-        keys.add(track.id);
-        if (track.name) {
-          keys.add(track.name.trim().toLowerCase());
-        }
-        if (track.spotifyTrackId) {
-          keys.add(track.spotifyTrackId);
-        }
-      });
-      setAddedTrackKeys(keys);
+      setAddedTrackKeys(buildKeySet(tracks));
     } catch (error) {
       console.error("Failed to fetch songs for jam:", error);
     }
-  }, [jamId]);
+  }, [jamId, buildKeySet]);
 
   useEffect(() => {
     fetchJamSession();
@@ -236,12 +270,15 @@ export default function HostPage() {
   };
 
   const handleAddTrackToJam = async (track: SpotifyTrack) => {
+    const artistsList = track.artists?.map((artist) => artist.name) ?? [];
     const nameKey = (track.name ?? "").trim().toLowerCase();
+    const lookupKey = createLookupKey(track.name, artistsList);
     const trackKey = track.id ?? nameKey;
 
     if (
       addedTrackKeys.has(trackKey) ||
       (nameKey && addedTrackKeys.has(nameKey)) ||
+      (lookupKey && addedTrackKeys.has(lookupKey)) ||
       addingTrackKeys.includes(trackKey)
     ) {
       return;
@@ -256,43 +293,76 @@ export default function HostPage() {
         .insert({
           jam_id: jamId,
           song_name: track.name,
+          artist: artistsList.join(", "),
           request: false,
         })
-        .select("id, song_name")
+        .select("id, song_name, artist")
         .single();
 
       if (error) {
         throw error;
       }
 
+      const fallbackArtists =
+        data.artist
+          ?.split(",")
+          .map((artist: string) => artist.trim())
+          .filter(Boolean) ?? [];
+      const resolvedArtists = artistsList.length > 0 ? artistsList : fallbackArtists;
+      const resolvedLookupKey = createLookupKey(data.song_name, resolvedArtists);
+
       const stageTrack: StageTrack = {
         id: data.id,
         name: data.song_name,
-        artists: track.artists?.map((artist) => artist.name) ?? [],
+        artists: resolvedArtists,
         albumName: track.album?.name,
         imageUrl: track.album?.images?.[0]?.url,
         spotifyUrl: track.external_urls?.spotify,
         spotifyTrackId: track.id,
+        lookupKey: resolvedLookupKey,
       };
 
-      setQueuedTracks((prev) => [...prev, stageTrack]);
-      setAddedTrackKeys((prev) => {
-        const updated = new Set(prev);
-        updated.add(trackKey);
-        if (nameKey) {
-          updated.add(nameKey);
-        }
-        updated.add(data.id);
-        if (track.id) {
-          updated.add(track.id);
-        }
-        return updated;
+      let updatedTracks: StageTrack[] = [];
+      setQueuedTracks((prev) => {
+        updatedTracks = [...prev, stageTrack];
+        return updatedTracks;
       });
+      setAddedTrackKeys(buildKeySet(updatedTracks));
     } catch (error) {
       console.error("Failed to add song to jam:", error);
       setAddSongError("Unable to add song to jam. Please try again.");
     } finally {
       setAddingTrackKeys((prev) => prev.filter((key) => key !== trackKey));
+    }
+  };
+
+  const handleRemoveTrackFromJam = async (track: StageTrack) => {
+    const trackId = track.id;
+    if (!trackId || deletingTrackIds.includes(trackId)) {
+      return;
+    }
+
+    setAddSongError(null);
+    setDeletingTrackIds((prev) => [...prev, trackId]);
+
+    try {
+      const { error } = await supabase.from("songs").delete().eq("id", trackId).eq("jam_id", jamId);
+
+      if (error) {
+        throw error;
+      }
+
+      let updatedTracks: StageTrack[] = [];
+      setQueuedTracks((prev) => {
+        updatedTracks = prev.filter((queued) => queued.id !== trackId);
+        return updatedTracks;
+      });
+      setAddedTrackKeys(buildKeySet(updatedTracks));
+    } catch (error) {
+      console.error("Failed to remove song from jam:", error);
+      setAddSongError("Unable to remove song from jam. Please try again.");
+    } finally {
+      setDeletingTrackIds((prev) => prev.filter((id) => id !== trackId));
     }
   };
 
@@ -456,7 +526,7 @@ export default function HostPage() {
                     <Download size={16} />
                     Download QR
                   </button>
-                </div>
+                    </div>
 
                 <div className="flex h-96 flex-col gap-4 rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-sm">
                   <div className="flex items-center justify-between">
@@ -574,7 +644,7 @@ export default function HostPage() {
                   )}
                 </div>
 
-              </div>
+                </div>
             </div>
           </div>
         </div>
@@ -586,15 +656,15 @@ export default function HostPage() {
             {queuedTracks.length === 0 ? (
               <div className="flex h-full items-center justify-center text-center">
                 <div>
-                  <div className="mb-4 inline-flex rounded-full bg-purple-500/20 p-8">
-                    <Music className="text-purple-400" size={64} />
-                  </div>
-                  <h3 className="mb-2 text-2xl font-bold text-white">Ready to Jam</h3>
-                  <p className="text-white/50">
-                    Search for songs on the left to start building your setlist.
-                  </p>
+                <div className="mb-4 inline-flex rounded-full bg-purple-500/20 p-8">
+                  <Music className="text-purple-400" size={64} />
                 </div>
+                <h3 className="mb-2 text-2xl font-bold text-white">Ready to Jam</h3>
+                <p className="text-white/50">
+                    Search for songs on the left to start building your setlist.
+                </p>
               </div>
+            </div>
             ) : (
               <div className="flex h-full flex-col">
                 <div className="flex items-center justify-between border-b border-white/10 pb-4">
@@ -603,7 +673,7 @@ export default function HostPage() {
                     <p className="text-sm text-white/50">
                       {queuedTracks.length} {queuedTracks.length === 1 ? "song" : "songs"} queued
                     </p>
-                  </div>
+          </div>
                   <div className="flex items-center gap-3">
                     <button
                       onClick={() => {/* TODO: handle previous track */}}
@@ -615,16 +685,16 @@ export default function HostPage() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 19V5m13.5 14L9 12l9.5-7" />
                       </svg>
                     </button>
-                    <motion.button
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      onClick={() => setIsPlaying(!isPlaying)}
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => setIsPlaying(!isPlaying)}
                       className="flex h-12 w-12 items-center justify-center rounded-full bg-linear-to-r from-purple-600 to-blue-600 text-white shadow-lg shadow-purple-500/50 transition-all hover:shadow-purple-500/70"
                       title={isPlaying ? "Pause" : "Play"}
                     >
                       {isPlaying ? <Pause size={20} /> : <Play className="ml-0.5" size={20} />}
-                    </motion.button>
-                    <button
+              </motion.button>
+              <button
                       onClick={() => {/* TODO: handle next track */}}
                       className="rounded-full border border-white/10 bg-white/5 p-2 text-white/70 transition-all hover:bg-white/10"
                       title="Next Track"
@@ -633,57 +703,73 @@ export default function HostPage() {
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 5v14M5.5 5l9.5 7-9.5 7" />
                       </svg>
-                    </button>
+              </button>
                   </div>
                 </div>
 
                 <div className="mt-4 flex-1 space-y-3 overflow-y-auto pr-2">
-                  {queuedTracks.map((track) => (
-                    <div
-                      key={track.id}
-                      className="flex items-center gap-4 rounded-2xl border border-white/10 bg-black/40 p-4 backdrop-blur"
-                    >
-                      <div className="h-16 w-16 overflow-hidden rounded-xl bg-white/10">
-                        {track.imageUrl ? (
-                          <Image
-                            src={track.imageUrl}
-                            alt={track.name}
-                            width={64}
-                            height={64}
-                            className="h-full w-full object-cover"
-                            unoptimized
-                          />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center text-xs text-white/50">
-                            No Art
-                          </div>
-                        )}
-                      </div>
+                  {queuedTracks.map((track) => {
+                    const isDeleting = deletingTrackIds.includes(track.id);
 
-                      <div className="flex flex-1 flex-col gap-1">
-                        <p className="text-lg font-semibold text-white">{track.name}</p>
-                        <p className="text-sm text-white/60">
-                          {track.artists.length > 0
-                            ? track.artists.join(", ")
-                            : "Unknown Artist"}
-                        </p>
-                        <p className="text-xs uppercase tracking-wide text-white/30">
-                          {track.albumName ?? "Playlist Entry"}
-                        </p>
-                      </div>
+                    return (
+                      <div
+                        key={track.id}
+                        className="flex items-center gap-4 rounded-2xl border border-white/10 bg-black/40 p-4 backdrop-blur"
+                      >
+                        <div className="h-16 w-16 overflow-hidden rounded-xl bg-white/10">
+                          {track.imageUrl ? (
+                            <Image
+                              src={track.imageUrl}
+                              alt={track.name}
+                              width={64}
+                              height={64}
+                              className="h-full w-full object-cover"
+                              unoptimized
+                            />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center text-xs text-white/50">
+                              No Art
+                            </div>
+                          )}
+                        </div>
 
-                      {track.spotifyUrl && (
-                        <a
-                          href={track.spotifyUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/70 transition-all hover:bg-white/10"
-                        >
-                          Open in Spotify
-                        </a>
-                      )}
-                    </div>
-                  ))}
+                        <div className="flex flex-1 flex-col gap-1">
+                          <p className="text-lg font-semibold text-white">{track.name}</p>
+                          <p className="text-sm text-white/60">
+                            {track.artists.length > 0
+                              ? track.artists.join(", ")
+                              : "Unknown Artist"}
+                          </p>
+                          <p className="text-xs uppercase tracking-wide text-white/30">
+                            {track.albumName ?? "Playlist Entry"}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {track.spotifyUrl && (
+                            <a
+                              href={track.spotifyUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/70 transition-all hover:bg-white/10"
+                            >
+                              Open in Spotify
+                            </a>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveTrackFromJam(track)}
+                            disabled={isDeleting}
+                            className="flex h-9 w-9 items-center justify-center rounded-full border border-red-500/40 bg-red-500/10 text-red-300 transition-all hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                            title="Remove from jam"
+                          >
+                            {isDeleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                            <span className="sr-only">Remove song</span>
+              </button>
+            </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
