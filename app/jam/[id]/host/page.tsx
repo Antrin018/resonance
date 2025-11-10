@@ -54,6 +54,7 @@ type StageTrack = {
   spotifyUrl?: string;
   spotifyTrackId?: string;
   lookupKey?: string;
+  lyrics?: string | null;
 };
 
 const createLookupKey = (name?: string | null, artists: string[] = []) => {
@@ -92,9 +93,15 @@ export default function HostPage() {
   const [addingTrackKeys, setAddingTrackKeys] = useState<string[]>([]);
   const [addSongError, setAddSongError] = useState<string | null>(null);
   const [deletingTrackIds, setDeletingTrackIds] = useState<string[]>([]);
+  const [expandedTrackId, setExpandedTrackId] = useState<string | null>(null);
+  const [lyricsMap, setLyricsMap] = useState<Record<string, string>>({});
+  const [lyricsFeedback, setLyricsFeedback] = useState<
+    Record<string, { type: "success" | "error"; message: string } | null>
+  >({});
+  const [savingLyricsId, setSavingLyricsId] = useState<string | null>(null);
 
   const participantLink = useMemo(
-    () => `http://localhost:3000/jam/${jamId}/participant`,
+    () => `http://localhost:3000/jam?action=join&&jamID=${jamId}`,
     [jamId]
   );
 
@@ -135,7 +142,7 @@ export default function HostPage() {
     try {
       const { data, error } = await supabase
         .from("songs")
-        .select("id, song_name, artist")
+        .select("id, song_name, artist, lyrics")
         .eq("jam_id", jamId)
         .eq("request", false);
 
@@ -163,6 +170,7 @@ export default function HostPage() {
             name: songName,
             artists: artistsFromDb,
             lookupKey: songLookupKey,
+            lyrics: song.lyrics ?? null,
           };
 
           try {
@@ -204,6 +212,14 @@ export default function HostPage() {
 
       setQueuedTracks(tracks);
       setAddedTrackKeys(buildKeySet(tracks));
+      setLyricsMap(
+        tracks.reduce<Record<string, string>>((acc, track) => {
+          if (track.id && track.lyrics) {
+            acc[track.id] = track.lyrics;
+          }
+          return acc;
+        }, {})
+      );
     } catch (error) {
       console.error("Failed to fetch songs for jam:", error);
     }
@@ -239,6 +255,64 @@ export default function HostPage() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  const handleToggleLyrics = (track: StageTrack) => {
+    setLyricsFeedback((prev) => ({ ...prev, [track.id]: null }));
+    setExpandedTrackId((prev) => (prev === track.id ? null : track.id));
+
+    if (track.lyrics && !lyricsMap[track.id]) {
+      setLyricsMap((prev) => ({ ...prev, [track.id]: track.lyrics ?? "" }));
+    }
+  };
+
+  const handleSaveLyrics = async (track: StageTrack) => {
+    if (!track.id) {
+      return;
+    }
+
+    const textToSave =
+      lyricsMap[track.id]?.trim() ?? track.lyrics?.trim() ?? "";
+
+    if (!textToSave) {
+      setLyricsFeedback((prev) => ({
+        ...prev,
+        [track.id]: { type: "error", message: "Paste lyrics before adding." },
+      }));
+      return;
+    }
+
+    setSavingLyricsId(track.id);
+    setLyricsFeedback((prev) => ({ ...prev, [track.id]: null }));
+
+    try {
+      const { error } = await supabase
+        .from("songs")
+        .update({ lyrics: textToSave })
+        .eq("id", track.id)
+        .eq("jam_id", jamId);
+
+      if (error) {
+        throw error;
+      }
+
+      setLyricsMap((prev) => ({ ...prev, [track.id]: textToSave }));
+      setQueuedTracks((prev) =>
+        prev.map((queued) => (queued.id === track.id ? { ...queued, lyrics: textToSave } : queued))
+      );
+      setLyricsFeedback((prev) => ({
+        ...prev,
+        [track.id]: { type: "success", message: "Lyrics added to this jam song." },
+      }));
+    } catch (error) {
+      console.error("Failed to save lyrics:", error);
+      setLyricsFeedback((prev) => ({
+        ...prev,
+        [track.id]: { type: "error", message: "Could not save lyrics. Please try again." },
+      }));
+    } finally {
+      setSavingLyricsId(null);
+    }
   };
 
   const handleSearchTracks = async () => {
@@ -358,6 +432,12 @@ export default function HostPage() {
         return updatedTracks;
       });
       setAddedTrackKeys(buildKeySet(updatedTracks));
+      setLyricsMap((prev) => {
+        const updated = { ...prev };
+        delete updated[trackId];
+        return updated;
+      });
+      setLyricsFeedback((prev) => ({ ...prev, [trackId]: null }));
     } catch (error) {
       console.error("Failed to remove song from jam:", error);
       setAddSongError("Unable to remove song from jam. Please try again.");
@@ -714,48 +794,48 @@ export default function HostPage() {
                     return (
                       <div
                         key={track.id}
-                        className="flex items-center gap-4 rounded-2xl border border-white/10 bg-black/40 p-4 backdrop-blur"
+                        className="space-y-4 rounded-2xl border border-white/10 bg-black/40 p-4 backdrop-blur"
                       >
-                        <div className="h-16 w-16 overflow-hidden rounded-xl bg-white/10">
-                          {track.imageUrl ? (
-                            <Image
-                              src={track.imageUrl}
-                              alt={track.name}
-                              width={64}
-                              height={64}
-                              className="h-full w-full object-cover"
-                              unoptimized
-                            />
-                          ) : (
-                            <div className="flex h-full w-full items-center justify-center text-xs text-white/50">
-                              No Art
-                            </div>
-                          )}
-                        </div>
+                        <div className="flex items-center gap-4">
+                          <div className="h-16 w-16 overflow-hidden rounded-xl bg-white/10">
+                            {track.imageUrl ? (
+                              <Image
+                                src={track.imageUrl}
+                                alt={track.name}
+                                width={64}
+                                height={64}
+                                className="h-full w-full object-cover"
+                                unoptimized
+                              />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center text-xs text-white/50">
+                                No Art
+                              </div>
+                            )}
+                          </div>
 
-                        <div className="flex flex-1 flex-col gap-1">
-                          <p className="text-lg font-semibold text-white">{track.name}</p>
-                          <p className="text-sm text-white/60">
-                            {track.artists.length > 0
-                              ? track.artists.join(", ")
-                              : "Unknown Artist"}
-                          </p>
-                          <p className="text-xs uppercase tracking-wide text-white/30">
-                            {track.albumName ?? "Playlist Entry"}
-                          </p>
-                        </div>
+                          <div className="flex flex-1 flex-col gap-1">
+                            <p className="text-lg font-semibold text-white">{track.name}</p>
+                            <p className="text-sm text-white/60">
+                              {track.artists.length > 0
+                                ? track.artists.join(", ")
+                                : "Unknown Artist"}
+                            </p>
+                            <p className="text-xs uppercase tracking-wide text-white/30">
+                              {track.albumName ?? "Playlist Entry"}
+                            </p>
+                          </div>
 
                         <div className="flex items-center gap-2">
-                          {track.spotifyUrl && (
-                            <a
-                              href={track.spotifyUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/70 transition-all hover:bg-white/10"
-                            >
-                              Open in Spotify
-                            </a>
-                          )}
+                          <motion.button
+                            whileHover={{ scale: 1.03 }}
+                            whileTap={{ scale: 0.97 }}
+                            type="button"
+                            onClick={() => handleToggleLyrics(track)}
+                            className="flex items-center gap-2 rounded-full bg-linear-to-r from-purple-600 to-blue-600 px-3 py-1 text-xs font-semibold text-white shadow-md shadow-purple-500/40 transition-all hover:shadow-purple-500/70"
+                          >
+                            {expandedTrackId === track.id ? "Hide Lyrics" : "Set Lyrics"}
+                          </motion.button>
                           <button
                             type="button"
                             onClick={() => handleRemoveTrackFromJam(track)}
@@ -763,10 +843,64 @@ export default function HostPage() {
                             className="flex h-9 w-9 items-center justify-center rounded-full border border-red-500/40 bg-red-500/10 text-red-300 transition-all hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
                             title="Remove from jam"
                           >
-                            {isDeleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                            {isDeleting ? (
+                              <Loader2 size={16} className="animate-spin" />
+                            ) : (
+                              <Trash2 size={16} />
+                            )}
                             <span className="sr-only">Remove song</span>
               </button>
+                        </div>
+                      </div>
+
+                      {expandedTrackId === track.id && (
+                        <div className="space-y-4 rounded-2xl border border-white/10 bg-black/30 p-4">
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm font-semibold text-white">Lyrics</p>
+                          </div>
+
+                          <textarea
+                            value={lyricsMap[track.id] ?? track.lyrics ?? ""}
+                            onChange={(event) =>
+                              setLyricsMap((prev) => ({ ...prev, [track.id]: event.target.value }))
+                            }
+                            rows={6}
+                            placeholder="Paste lyrics here..."
+                            className="h-48 w-full resize-none rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white/80 placeholder-white/30 focus:outline-none"
+                          />
+                          <div className="flex items-center justify-between">
+                            <div className="text-xs text-white/60">
+                              {(lyricsMap[track.id] ?? "").length} characters
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleSaveLyrics(track)}
+                              disabled={savingLyricsId === track.id}
+                              className="flex items-center gap-2 rounded-full bg-linear-to-r from-purple-600 to-blue-600 px-4 py-1.5 text-xs font-semibold text-white shadow-md shadow-purple-500/40 transition-all hover:shadow-purple-500/60 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {savingLyricsId === track.id ? (
+                                <>
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  Saving...
+                                </>
+                              ) : (
+                                "Add Lyrics"
+                              )}
+              </button>
             </div>
+                          {lyricsFeedback[track.id] && (
+                            <p
+                              className={`text-xs ${
+                                lyricsFeedback[track.id]?.type === "success"
+                                  ? "text-green-300"
+                                  : "text-red-300"
+                              }`}
+                            >
+                              {lyricsFeedback[track.id]?.message}
+                            </p>
+                          )}
+                        </div>
+                      )}
                       </div>
                     );
                   })}
