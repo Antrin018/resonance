@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect,  useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowLeft, Music, Loader2, Search } from "lucide-react";
+import { ArrowLeft, Music, Loader2, Plus, Check, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import Image from "next/image";
 
@@ -48,6 +48,12 @@ type StageTrack = {
   isCurrent?: boolean;
 };
 
+type SongRequest = {
+  id: string;
+  song_name: string;
+  artist: string;
+};
+
 export default function ParticipantPage() {
   const params = useParams();
   const router = useRouter();
@@ -66,11 +72,12 @@ export default function ParticipantPage() {
   const [searchResults, setSearchResults] = useState<SpotifyTrack[]>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [expandedTrackId, setExpandedTrackId] = useState<string | null>(null);
+  const [songRequests, setSongRequests] = useState<SongRequest[]>([]);
+  const [loadingRequests, setLoadingRequests] = useState(true);
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const [requestingTrackIds, setRequestingTrackIds] = useState<string[]>([]);
+  const [deletingRequestIds, setDeletingRequestIds] = useState<string[]>([]);
 
-  const participantLink = useMemo(
-    () => `http://localhost:3000/jam?action=join&&jamID=${jamId}`,
-    [jamId]
-  );
 
   useEffect(() => {
     const fetchData = async () => {
@@ -99,6 +106,38 @@ export default function ParticipantPage() {
 
     fetchData();
   }, [jamId, participantId]);
+
+  useEffect(() => {
+    const fetchRequests = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("requests")
+          .select("id, song_name, artist")
+          .eq("jam_id", jamId)
+          .order("id", { ascending: true });
+
+        if (error) throw error;
+
+        setSongRequests(
+          (data ?? []).map((item) => ({
+            id: item.id,
+            song_name: item.song_name,
+            artist: item.artist,
+          }))
+        );
+      } catch (error) {
+        console.error("Failed to fetch song requests:", error);
+        setRequestError("Unable to load song requests right now.");
+      } finally {
+        setLoadingRequests((prev) => (prev ? false : prev));
+      }
+    };
+
+    fetchRequests();
+
+    const interval = setInterval(fetchRequests, 5000);
+    return () => clearInterval(interval);
+  }, [jamId]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -265,6 +304,7 @@ export default function ParticipantPage() {
 
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-black font-sans">
+      {/* Animated background grid */}
       <div className="absolute inset-0 opacity-10">
         <div
           className="absolute inset-0"
@@ -276,22 +316,38 @@ export default function ParticipantPage() {
         />
       </div>
 
+      {/* Background gradient orbs */}
       <div className="absolute inset-0 overflow-hidden">
         <motion.div
           className="absolute -top-1/2 -left-1/4 h-[600px] w-[600px] rounded-full bg-purple-600/30 blur-[120px]"
-          animate={{ scale: [1, 1.2, 1], opacity: [0.2, 0.4, 0.2] }}
-          transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
+          animate={{
+            scale: [1, 1.2, 1],
+            opacity: [0.2, 0.4, 0.2],
+          }}
+          transition={{
+            duration: 8,
+            repeat: Infinity,
+            ease: "easeInOut",
+          }}
         />
         <motion.div
           className="absolute -bottom-1/2 -right-1/4 h-[600px] w-[600px] rounded-full bg-blue-600/30 blur-[120px]"
-          animate={{ scale: [1.2, 1, 1.2], opacity: [0.2, 0.4, 0.2] }}
-          transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
+          animate={{
+            scale: [1.2, 1, 1.2],
+            opacity: [0.2, 0.4, 0.2],
+          }}
+          transition={{
+            duration: 10,
+            repeat: Infinity,
+            ease: "easeInOut",
+          }}
         />
       </div>
 
+      {/* Header */}
       <header className="relative z-10 border-b border-white/10 bg-black/40 backdrop-blur-xl">
-        <div className="mx-auto max-w-6xl px-6 py-4">
-          <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="mx-auto max-w-7xl px-6 py-4">
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <motion.button
                 initial={{ opacity: 0, x: -20 }}
@@ -317,81 +373,298 @@ export default function ParticipantPage() {
               </div>
             </div>
 
-            <div className="text-right">
-              <p className="text-xs uppercase tracking-wide text-white/40">Invite link</p>
-              <p className="font-mono text-sm text-white/70">{participantLink}</p>
+            <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 backdrop-blur-xl">
+              <span className="text-xs uppercase tracking-wide text-white/40">Participant View</span>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="relative z-10 flex-1 px-6 py-8">
-        <div className="mx-auto grid max-w-6xl gap-6 md:grid-cols-[380px,1fr]">
-          <div className="flex flex-col gap-6">
-            <section className="rounded-3xl border border-white/10 bg-black/40 p-6 shadow-2xl backdrop-blur-xl">
-              <h2 className="mb-4 text-lg font-semibold text-white">Search Songs</h2>
-              <p className="mb-5 text-sm text-white/50">
-                Discover tracks to suggest to the host or share inspiration with the group.
+      {/* Main Content */}
+      <main className="relative z-10 flex flex-1 gap-6 p-6">
+        {/* Left Panel - Song Requests */}
+        <div className="w-104 shrink-0">
+          <div className="rounded-3xl border border-white/10 bg-black/40 p-6 shadow-2xl backdrop-blur-xl">
+            <div className="mb-6">
+              <h2 className="text-lg font-semibold text-white">Song Requests</h2>
+              <p className="text-sm text-white/50">
+                Suggestions from you and other participants
               </p>
+            </div>
 
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  handleSearchTracks();
-                }}
-                className="mb-4 flex gap-2"
-              >
-                <div className="relative flex-1">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/50" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(event) => setSearchQuery(event.target.value)}
-                    placeholder="Search Spotify by song, artist, or album"
-                    className="w-full rounded-xl border border-purple-500/40 bg-black/80 py-2.5 pl-10 pr-3 text-sm text-white placeholder-white/40 focus:border-purple-500/60 focus:outline-none focus:ring-2 focus:ring-purple-500/30"
-                  />
+            <div className="max-h-[calc(100vh-16rem)] space-y-3 overflow-y-auto pr-2">
+              {loadingRequests ? (
+                <div className="rounded-2xl border border-white/10 bg-black/30 p-4 text-center text-sm text-white/50">
+                  Loading requests…
                 </div>
-                <button
-                  type="submit"
-                  disabled={!searchQuery.trim() || isSearching}
-                  className="rounded-xl bg-linear-to-r from-purple-600 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-md transition-all hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {isSearching ? "Searching..." : "Search"}
-                </button>
-              </form>
+              ) : songRequests.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-white/15 bg-black/30 p-4 text-center text-sm text-white/40">
+                  No song requests yet. Search for songs on the right to raise a request.
+                </div>
+              ) : (
+                 songRequests.map((request) => {
+                   const isDeleting = deletingRequestIds.includes(request.id);
 
-              {searchError && (
-                <div className="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">
-                  {searchError}
-                </div>
+                   const handleDeleteRequest = async () => {
+                     if (isDeleting) return;
+                     setRequestError(null);
+                     setDeletingRequestIds((prev) => [...prev, request.id]);
+
+                     try {
+                       const { error } = await supabase
+                         .from("requests")
+                         .delete()
+                         .eq("id", request.id)
+                         .eq("jam_id", jamId);
+
+                       if (error) {
+                         throw error;
+                       }
+
+                       setSongRequests((prev) => prev.filter((item) => item.id !== request.id));
+                     } catch (error) {
+                       console.error("Failed to delete song request:", error);
+                       setRequestError("Unable to delete this request. Please try again.");
+                     } finally {
+                       setDeletingRequestIds((prev) => prev.filter((id) => id !== request.id));
+                     }
+                   };
+
+                   return (
+                     <div
+                       key={request.id}
+                       className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/40 p-4 backdrop-blur-sm"
+                     >
+                       <div className="space-y-1">
+                         <p className="text-sm font-semibold text-white">{request.song_name}</p>
+                         <p className="text-xs uppercase tracking-wide text-white/40">
+                           {request.artist || "Unknown Artist"}
+                         </p>
+                       </div>
+                       <button
+                         type="button"
+                         onClick={handleDeleteRequest}
+                         disabled={isDeleting}
+                         className="flex h-8 w-8 items-center justify-center rounded-full border border-red-500/40 bg-red-500/10 text-red-300 transition-all hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                         title="Delete request"
+                       >
+                         {isDeleting ? (
+                           <Loader2 size={16} className="animate-spin" />
+                         ) : (
+                           <Trash2 size={16} />
+                         )}
+                       </button>
+                     </div>
+                   );
+                 })
               )}
+            </div>
 
-              <div className="max-h-80 space-y-3 overflow-y-auto pr-1">
-                {isSearching && searchResults.length === 0 ? (
-                  <div className="rounded-xl border border-white/10 bg-black/40 p-4 text-center text-white/60">
-                    Searching…
-                  </div>
-                ) : searchResults.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-white/15 bg-black/30 p-4 text-center text-sm text-white/40">
-                    Use the search bar to explore songs and artists.
-                  </div>
-                ) : (
-                  searchResults.map((track) => {
-                    const image = track.album?.images?.[0]?.url;
-                    const artists = track.artists.map((artist) => artist.name).join(", ");
+            {requestError && (
+              <div className="mt-4 rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
+                {requestError}
+              </div>
+            )}
+          </div>
+        </div>
 
-                    return (
-                      <div
-                        key={track.id}
-                        className="flex items-center gap-4 rounded-xl border border-white/10 bg-black/40 p-4 backdrop-blur-sm"
+        {/* Right Panel - Search and Setlist */}
+        <div className="flex min-w-[calc(100%-26rem)] flex-1 flex-col gap-6">
+          {/* Search Songs Section */}
+          <div className="rounded-3xl border border-white/10 bg-black/40 p-6 shadow-2xl backdrop-blur-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Search Songs</h2>
+                <p className="text-sm text-white/50">
+                  Discover tracks to request or share inspiration
+                </p>
+              </div>
+              <p className="text-xs uppercase tracking-wide text-white/40">Powered by Spotify</p>
+            </div>
+
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                handleSearchTracks();
+              }}
+              className="mb-4 flex gap-2"
+            >
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search for a song or artist"
+                className="flex-1 rounded-xl border border-purple-500/40 bg-black/80 px-4 py-2.5 text-sm text-white placeholder-zinc-500 focus:border-purple-500/60 focus:outline-none focus:ring-2 focus:ring-purple-500/30"
+              />
+              <button
+                type="submit"
+                disabled={!searchQuery.trim() || isSearching}
+                className="flex items-center gap-2 rounded-xl bg-linear-to-r from-purple-600 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-md transition-all hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isSearching ? "Searching..." : "Search"}
+              </button>
+            </form>
+
+            {searchError && (
+              <div className="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
+                {searchError}
+              </div>
+            )}
+
+            <div className="max-h-96 space-y-3 overflow-y-auto pr-1">
+              {isSearching && searchResults.length === 0 ? (
+                <div className="rounded-xl border border-white/10 bg-black/40 p-4 text-center text-white/60">
+                  Searching…
+                </div>
+              ) : searchResults.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-white/15 bg-black/30 p-4 text-center text-sm text-white/40">
+                  Search for a song to raise a request to the host.
+                </div>
+              ) : (
+                searchResults.map((track) => {
+                  const image = track.album?.images?.[0]?.url;
+                  const artists = track.artists.map((artist) => artist.name).join(", ");
+                  const trackKey = track.id ?? track.name.trim().toLowerCase();
+                  const isRequesting = requestingTrackIds.includes(trackKey);
+                  const alreadyRequested = songRequests.some(
+                    (request) =>
+                      request.song_name.toLowerCase() === track.name.toLowerCase() &&
+                      request.artist.toLowerCase() === artists.toLowerCase()
+                  );
+
+                  const handleRaiseRequest = async () => {
+                    if (alreadyRequested || isRequesting) return;
+                    setRequestError(null);
+                    setRequestingTrackIds((prev) => [...prev, trackKey]);
+
+                    try {
+                      const { data, error } = await supabase
+                        .from("requests")
+                        .insert({
+                          jam_id: jamId,
+                          participant_id: participantId,
+                          song_name: track.name,
+                          artist: artists,
+                        })
+                        .select("id, song_name, artist")
+                        .single();
+
+                      if (error) {
+                        throw error;
+                      }
+
+                      setSongRequests((prev) => [
+                        ...prev,
+                        {
+                          id: data.id,
+                          song_name: data.song_name,
+                          artist: data.artist,
+                        },
+                      ]);
+                    } catch (error) {
+                      console.error("Failed to raise song request:", error);
+                      setRequestError("Unable to raise request right now. Please try again.");
+                    } finally {
+                      setRequestingTrackIds((prev) => prev.filter((id) => id !== trackKey));
+                    }
+                  };
+
+                  return (
+                    <div
+                      key={track.id}
+                      className="flex items-center gap-4 rounded-xl border border-white/10 bg-black/40 p-4 backdrop-blur-sm"
+                    >
+                      <div className="h-14 w-14 overflow-hidden rounded-lg bg-white/10">
+                        {image ? (
+                          <Image
+                            src={image}
+                            alt={track.name}
+                            width={56}
+                            height={56}
+                            className="h-full w-full object-cover"
+                            unoptimized
+                          />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-xs text-white/50">
+                            No Art
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold text-white">{track.name}</p>
+                        <p className="text-xs text-white/60">{artists}</p>
+                        <p className="text-[11px] uppercase tracking-wide text-white/30">
+                          {track.album?.name}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleRaiseRequest}
+                        disabled={alreadyRequested || isRequesting}
+                        className={`flex h-10 w-10 items-center justify-center rounded-full border transition-colors ${
+                          alreadyRequested
+                            ? "border-green-500/60 bg-green-500/20 text-green-300"
+                            : isRequesting
+                            ? "border-blue-500/60 bg-blue-500/20 text-blue-200"
+                            : "border-purple-500/50 bg-purple-500/20 text-purple-100 hover:bg-purple-500/30"
+                        } disabled:cursor-not-allowed`}
+                        title={
+                          alreadyRequested ? "Requested" : isRequesting ? "Requesting..." : "Raise request"
+                        }
                       >
-                        <div className="h-14 w-14 overflow-hidden rounded-lg bg-white/10">
-                          {image ? (
+                        {alreadyRequested ? (
+                          <Check size={18} />
+                        ) : isRequesting ? (
+                          <Loader2 size={18} className="animate-spin" />
+                        ) : (
+                          <Plus size={18} />
+                        )}
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Live Setlist Section */}
+           <div className="flex-1 rounded-3xl border border-white/10 bg-linear-to-br from-white/5 via-black/70 to-white/5 p-6 shadow-2xl backdrop-blur-xl">
+            <div className="flex items-center justify-between border-b border-white/10 pb-4">
+              <div>
+                <h3 className="text-xl font-semibold text-white">Live Setlist</h3>
+                <p className="text-sm text-white/50">
+                  {queuedTracks.length} {queuedTracks.length === 1 ? "song" : "songs"} in the queue
+                </p>
+              </div>
+            </div>
+
+             <div className="mt-4 max-h-[calc(100vh-24rem)] space-y-3 overflow-y-auto pr-2">
+              {queuedTracks.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-white/15 bg-black/30 p-6 text-center text-sm text-white/40">
+                  The host hasn&apos;t added any songs yet. Sit tight and enjoy the vibe!
+                </div>
+              ) : (
+                queuedTracks.map((track) => {
+                  const isActive = track.id === currentTrackId;
+                  const cardClassName = [
+                    "space-y-3 rounded-2xl border p-4 backdrop-blur transition-shadow",
+                    isActive
+                      ? "border-purple-500 bg-linear-to-r from-purple-600/20 to-blue-600/15 shadow-[0_0_35px_rgba(168,85,247,0.35)]"
+                      : "border-white/10 bg-black/40",
+                  ].join(" ");
+
+                  return (
+                    <div key={track.id} className={cardClassName}>
+                      <div className="flex items-center gap-4">
+                        <div className="h-16 w-16 overflow-hidden rounded-xl bg-white/10">
+                          {track.imageUrl ? (
                             <Image
-                              src={image}
+                              src={track.imageUrl}
                               alt={track.name}
-                              width={56}
-                              height={56}
+                              width={64}
+                              height={64}
                               className="h-full w-full object-cover"
                               unoptimized
                             />
@@ -402,112 +675,37 @@ export default function ParticipantPage() {
                           )}
                         </div>
 
-                        <div className="flex-1">
-                          <p className="text-sm font-semibold text-white">{track.name}</p>
-                          <p className="text-xs text-white/60">{artists}</p>
-                          <p className="text-[11px] uppercase tracking-wide text-white/30">
-                            {track.album?.name}
+                        <div className="flex flex-1 flex-col gap-1">
+                          <p className="text-lg font-semibold text-white">{track.name}</p>
+                          <p className="text-sm text-white/60">
+                            {track.artists.length > 0 ? track.artists.join(", ") : "Unknown Artist"}
+                          </p>
+                          <p className="text-xs uppercase tracking-wide text-white/30">
+                            {track.albumName ?? "Playlist Entry"}
                           </p>
                         </div>
 
-                        {track.external_urls?.spotify && (
-                          <a
-                            href={track.external_urls.spotify}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="rounded-full border border-purple-500/40 bg-purple-500/10 px-3 py-1 text-xs font-semibold text-purple-200 transition-all hover:bg-purple-500/20"
-                          >
-                            Open
-                          </a>
-                        )}
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </section>
-          </div>
-
-          <div className="flex flex-col gap-6">
-            <section className="rounded-3xl border border-white/10 bg-linear-to-br from-white/5 via-black/70 to-white/5 p-6 shadow-2xl backdrop-blur-xl">
-              <div className="flex items-center justify-between border-b border-white/10 pb-4">
-                <div>
-                  <h3 className="text-xl font-semibold text-white">Live Setlist</h3>
-                  <p className="text-sm text-white/50">
-                    {queuedTracks.length} {queuedTracks.length === 1 ? "song" : "songs"} in the queue
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-4 space-y-3">
-                {queuedTracks.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-white/15 bg-black/30 p-6 text-center text-sm text-white/40">
-                    The host hasn’t added any songs yet. Sit tight and enjoy the vibe!
-                  </div>
-                ) : (
-                  queuedTracks.map((track) => {
-                    const isActive = track.id === currentTrackId;
-                    const cardClassName = [
-                      "space-y-3 rounded-2xl border p-4 backdrop-blur transition-shadow",
-                      isActive
-                        ? "border-purple-500 bg-linear-to-r from-purple-600/20 to-blue-600/15 shadow-[0_0_35px_rgba(168,85,247,0.35)]"
-                        : "border-white/10 bg-black/40",
-                    ].join(" ");
-
-                    return (
-                      <div key={track.id} className={cardClassName}>
-                        <div className="flex items-center justify-between gap-4">
-                          <div className="flex items-center gap-3">
-                            <div className="h-14 w-14 overflow-hidden rounded-xl bg-white/10">
-                              {track.imageUrl ? (
-                                <Image
-                                  src={track.imageUrl}
-                                  alt={track.name}
-                                  width={56}
-                                  height={56}
-                                  className="h-full w-full object-cover"
-                                  unoptimized
-                                />
-                              ) : (
-                                <div className="flex h-full w-full items-center justify-center text-xs text-white/50">
-                                  No Art
-                                </div>
-                              )}
-                            </div>
-                            <div>
-                              <p className="text-lg font-semibold text-white">{track.name}</p>
-                              <p className="text-sm text-white/60">
-                                {track.artists.length > 0 ? track.artists.join(", ") : "Unknown Artist"}
-                              </p>
-                              {track.albumName && (
-                                <p className="text-xs uppercase tracking-wide text-white/30">
-                                  {track.albumName}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {renderLyricsToggle(track)}
-                            {isActive && (
-                              <span className="rounded-full bg-purple-500/20 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-purple-200">
-                                Now Playing
-                              </span>
-                            )}
-                          </div>
+                        <div className="flex items-center gap-2">
+                          {renderLyricsToggle(track)}
+                          {isActive && (
+                            <span className="rounded-full bg-purple-500/20 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-purple-200">
+                              Now Playing
+                            </span>
+                          )}
                         </div>
-
-                        {expandedTrackId === track.id && track.lyrics && (
-                          <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm text-white/70">
-                            <p className="mb-1 text-xs uppercase tracking-wide text-white/40">Lyrics</p>
-                            <p className="whitespace-pre-wrap leading-relaxed">{track.lyrics}</p>
-                          </div>
-                        )}
                       </div>
-                    );
-                  })
-                )}
-              </div>
-            </section>
+
+                      {expandedTrackId === track.id && track.lyrics && (
+                        <div className="rounded-xl border border-white/10 bg-black/30 p-4">
+                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/40">Lyrics</p>
+                          <p className="whitespace-pre-wrap text-sm leading-relaxed text-white/70">{track.lyrics}</p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
       </main>
