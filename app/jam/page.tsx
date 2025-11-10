@@ -3,8 +3,17 @@
 import { useSearchParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { ArrowLeft, Plus, Users, Music, ThumbsUp, Radio, UserCheck, Lock } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase-client";
+
+type Jam = {
+  id: string;
+  name: string;
+  host: string;
+  private: boolean;
+  max_participants: number;
+  created_at: string;
+};
 
 export default function JamPage() {
   const searchParams = useSearchParams();
@@ -23,10 +32,91 @@ export default function JamPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  const handleJoinSession = () => {
-    if (joinCode.trim()) {
-      // Navigate to the session
-      router.push(`/jam/${joinCode.trim()}/participant`);
+  // Rejoin session state
+  const [isRejoinMode, setIsRejoinMode] = useState(false);
+  const [rejoinId, setRejoinId] = useState("");
+  const [isRejoining, setIsRejoining] = useState(false);
+  const [rejoinError, setRejoinError] = useState<string | null>(null);
+
+  // Join session state
+  const [availableJams, setAvailableJams] = useState<Jam[]>([]);
+  const [loadingJams, setLoadingJams] = useState(false);
+  const [pendingRequest, setPendingRequest] = useState<string | null>(null);
+
+  // Fetch available jams when on join page
+  useEffect(() => {
+    if (action === "join") {
+      fetchAvailableJams();
+    }
+  }, [action]);
+
+  const fetchAvailableJams = async () => {
+    setLoadingJams(true);
+    try {
+      const { data, error } = await supabase
+        .from("jams")
+        .select("id, name, host, private, max_participants, created_at")
+        .order("created_at", { ascending: false })
+        .limit(10);
+
+      if (error) throw error;
+      setAvailableJams(data || []);
+    } catch (error) {
+      console.error("Failed to fetch jams:", error);
+    } finally {
+      setLoadingJams(false);
+    }
+  };
+
+  const handleJoinSession = (jamId?: string, isPrivateJam?: boolean) => {
+    const sessionId = jamId || joinCode.trim();
+
+    if (!sessionId) return;
+
+    if (isPrivateJam) {
+      // Show pending request message for private jams
+      setPendingRequest(sessionId);
+      // TODO: Send join request to backend
+      return;
+    }
+
+    // Navigate to the session
+    router.push(`/jam/${sessionId}/participant`);
+  };
+
+  const handleCancelRequest = () => {
+    setPendingRequest(null);
+    // TODO: Cancel join request in backend
+  };
+
+  const handleRejoinSession = async () => {
+    if (!rejoinId.trim() || isRejoining) {
+      return;
+    }
+
+    setIsRejoining(true);
+    setRejoinError(null);
+
+    try {
+      // Check if jam exists in database
+      const { data, error } = await supabase
+        .from("jams")
+        .select("id")
+        .eq("id", rejoinId.trim())
+        .single();
+
+      if (error || !data) {
+        setRejoinError("Jam session not found. Please check the ID and try again.");
+        return;
+      }
+
+      // Redirect to host page
+      router.push(`/jam/${rejoinId.trim()}/host`);
+    } catch (error) {
+      console.error("Failed to rejoin session:", error);
+      setRejoinError("Unable to rejoin session. Please try again.");
+    } finally {
+      setIsRejoining(false);
     }
   };
 
@@ -133,21 +223,63 @@ export default function JamPage() {
           className="flex max-h-[90vh] flex-col rounded-3xl border border-white/10 bg-black/40 shadow-2xl backdrop-blur-xl"
           >
             <div className="shrink-0 p-8 pb-6">
-              <div className="mb-4 flex items-center gap-4">
-                <div className="rounded-2xl bg-linear-to-br from-purple-500/20 to-blue-500/20 p-3 backdrop-blur-sm">
-                  <Plus className="text-purple-400" size={28} />
+              <div className="mb-4 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="rounded-2xl bg-linear-to-br from-purple-500/20 to-blue-500/20 p-3 backdrop-blur-sm">
+                    <Plus className="text-purple-400" size={28} />
+                  </div>
+                  <h1 className="text-3xl font-bold text-white">
+                    {isRejoinMode ? "Rejoin Jam Session" : "Create Jam Session"}
+                  </h1>
                 </div>
-                <h1 className="text-3xl font-bold text-white">Create Jam Session</h1>
+                <motion.button
+                  onClick={() => {
+                    setIsRejoinMode(!isRejoinMode);
+                    setCreateError(null);
+                    setRejoinError(null);
+                  }}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  className="group relative overflow-hidden rounded-xl bg-linear-to-r from-purple-600 to-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-purple-500/30 transition-all hover:shadow-purple-500/50"
+                >
+                  <motion.div
+                    className="absolute inset-0 bg-linear-to-r from-purple-500 to-blue-500 opacity-0 transition-opacity group-hover:opacity-100"
+                    initial={false}
+                  />
+                  <span className="relative">
+                    {isRejoinMode ? "Create New" : "Rejoin"}
+                  </span>
+                </motion.button>
               </div>
 
               <p className="text-zinc-400">
-                Start a new collaborative jam session. Configure your settings and invite others to
-                join.
+                {isRejoinMode
+                  ? "Enter your jam session ID to rejoin as host."
+                  : "Start a new collaborative jam session. Configure your settings and invite others to join."}
               </p>
             </div>
 
             <div className="scrollbar-thin scrollbar-track-white/5 scrollbar-thumb-purple-500/50 flex-1 overflow-y-auto px-8 py-6">
 
+            {isRejoinMode ? (
+              /* Rejoin Mode - Just Jam ID Input */
+              <div className="mb-8">
+                <label className="mb-2 block text-sm font-medium text-white/80">
+                  Jam Session ID
+                </label>
+                <input
+                  type="text"
+                  value={rejoinId}
+                  onChange={(e) => setRejoinId(e.target.value)}
+                  placeholder="Enter your jam session ID"
+                  className="w-full rounded-xl border border-purple-500/40 bg-black px-4 py-3.5 text-white placeholder-zinc-500 backdrop-blur-xl transition-all focus:border-purple-500/50 focus:bg-black focus:outline-none focus:ring-2 focus:ring-purple-500/30"
+                />
+                <p className="mt-2 text-sm text-white/50">
+                  Enter the ID of the jam session you want to rejoin as host
+                </p>
+              </div>
+            ) : (
+              <>
             {/* Session Details */}
             <div className="mb-8 space-y-5">
               <div>
@@ -326,29 +458,58 @@ export default function JamPage() {
                 </motion.button>
               </div>
             </div>
+            </>
+            )}
             </div>
 
-            {/* Create Button - Fixed at bottom */}
+            {/* Action Button - Fixed at bottom */}
             <div className="shrink-0 p-8 pt-6">
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={handleCreateSession}
-                disabled={!jamName.trim() || !hostName.trim() || isCreating}
-                className="group relative w-full overflow-hidden rounded-2xl bg-linear-to-r from-purple-600 to-blue-600 px-8 py-4 text-lg font-semibold text-white shadow-2xl shadow-purple-500/30 transition-all hover:shadow-purple-500/50 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
-              >
-                <motion.div
-                  className="absolute inset-0 bg-linear-to-r from-purple-500 to-blue-500 opacity-0 transition-opacity group-hover:opacity-100"
-                  initial={false}
-                />
-                <span className="relative flex items-center justify-center gap-2">
-                  {isCreating ? "Creating Session..." : "Start Session as Host"}
-                </span>
-              </motion.button>
-              {createError && (
-                <p className="mt-4 text-sm text-red-400">
-                  {createError}
-                </p>
+              {isRejoinMode ? (
+                <>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleRejoinSession}
+                    disabled={!rejoinId.trim() || isRejoining}
+                    className="group relative w-full overflow-hidden rounded-2xl bg-linear-to-r from-purple-600 to-blue-600 px-8 py-4 text-lg font-semibold text-white shadow-2xl shadow-purple-500/30 transition-all hover:shadow-purple-500/50 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+                  >
+                    <motion.div
+                      className="absolute inset-0 bg-linear-to-r from-purple-500 to-blue-500 opacity-0 transition-opacity group-hover:opacity-100"
+                      initial={false}
+                    />
+                    <span className="relative flex items-center justify-center gap-2">
+                      {isRejoining ? "Rejoining Session..." : "Rejoin as Host"}
+                    </span>
+                  </motion.button>
+                  {rejoinError && (
+                    <p className="mt-4 text-sm text-red-400">
+                      {rejoinError}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleCreateSession}
+                    disabled={!jamName.trim() || !hostName.trim() || isCreating}
+                    className="group relative w-full overflow-hidden rounded-2xl bg-linear-to-r from-purple-600 to-blue-600 px-8 py-4 text-lg font-semibold text-white shadow-2xl shadow-purple-500/30 transition-all hover:shadow-purple-500/50 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+                  >
+                    <motion.div
+                      className="absolute inset-0 bg-linear-to-r from-purple-500 to-blue-500 opacity-0 transition-opacity group-hover:opacity-100"
+                      initial={false}
+                    />
+                    <span className="relative flex items-center justify-center gap-2">
+                      {isCreating ? "Creating Session..." : "Start Session as Host"}
+                    </span>
+                  </motion.button>
+                  {createError && (
+                    <p className="mt-4 text-sm text-red-400">
+                      {createError}
+                    </p>
+                  )}
+                </>
               )}
             </div>
           </motion.div>
@@ -357,9 +518,9 @@ export default function JamPage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
-            className="flex max-h-[85vh] flex-col rounded-3xl border border-white/10 bg-black/40 shadow-2xl backdrop-blur-xl"
+            className="flex max-h-[90vh] flex-col rounded-3xl border border-white/10 bg-black/40 shadow-2xl backdrop-blur-xl"
           >
-            <div className="shrink-0 border-b border-white/10 p-8 pb-6">
+            <div className="shrink-0 p-8 pb-6">
               <div className="mb-4 flex items-center gap-4">
                 <div className="rounded-2xl bg-linear-to-br from-blue-500/20 to-purple-500/20 p-3 backdrop-blur-sm">
                   <Users className="text-blue-400" size={28} />
@@ -375,62 +536,87 @@ export default function JamPage() {
             <div className="scrollbar-thin scrollbar-track-white/5 scrollbar-thumb-blue-500/50 flex-1 overflow-y-auto px-8 py-6">
 
             {/* Join Code Input */}
-            <div className="mb-6">
+            <div className="mb-8">
               <label className="mb-2 block text-sm font-medium text-white/80">Session ID</label>
               <input
                 type="text"
                 value={joinCode}
                 onChange={(e) => setJoinCode(e.target.value)}
                 placeholder="Enter session ID"
-                className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3.5 font-mono text-lg text-white placeholder-zinc-500 backdrop-blur-xl transition-all focus:border-blue-500/50 focus:bg-white/10 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                className="w-full rounded-xl border border-blue-500/40 bg-black px-4 py-3.5 font-mono text-lg text-white placeholder-zinc-500 backdrop-blur-xl transition-all focus:border-blue-500/50 focus:bg-black focus:outline-none focus:ring-2 focus:ring-blue-500/30"
               />
               <p className="mt-2 text-sm text-white/50">
                 Ask the host for their session ID to join
               </p>
             </div>
 
-            {/* Recent Sessions Preview */}
-            <div className="mb-8 space-y-4 rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-xl">
-              <h3 className="text-lg font-semibold text-white">Recent Sessions</h3>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 p-3.5 backdrop-blur-sm transition-all hover:bg-white/10">
-                  <div className="flex items-center gap-3">
-                    <div className="rounded-lg bg-purple-500/20 p-2">
-                      <Music className="text-purple-400" size={18} />
+            {/* Available Jams */}
+            <div className="mb-8 space-y-4 rounded-2xl bg-linear-to-br from-white/5 via-black/70 to-white/5 p-6 backdrop-blur-md">
+              <h3 className="text-lg font-semibold text-white">Available Jams</h3>
+
+              {loadingJams ? (
+                <div className="py-8 text-center text-white/50">Loading jams...</div>
+              ) : availableJams.length === 0 ? (
+                <div className="py-8 text-center text-white/50">No available jams at the moment</div>
+              ) : (
+                <div className="space-y-3">
+                  {availableJams.map((jam) => (
+                    <div
+                      key={jam.id}
+                      className="flex items-center justify-between rounded-xl border border-white/10 bg-black/50 p-4 backdrop-blur-sm transition-all hover:bg-black/70"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`rounded-lg p-2 ${jam.private ? "bg-orange-500/20" : "bg-blue-500/20"}`}>
+                          {jam.private ? (
+                            <Lock className="text-orange-400" size={18} />
+                          ) : (
+                            <Music className="text-blue-400" size={18} />
+                          )}
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-white">{jam.name}</p>
+                          <p className="text-xs text-white/50">
+                            Host: {jam.host} • Max: {jam.max_participants}
+                          </p>
+                        </div>
+                      </div>
+                      {pendingRequest === jam.id ? (
+                        <div className="flex items-center gap-2">
+                          <div className="rounded-lg bg-yellow-500/20 px-3 py-1.5 text-xs font-medium text-yellow-400">
+                            Request Pending
+                          </div>
+                          <button
+                            onClick={handleCancelRequest}
+                            className="rounded-lg bg-red-500/20 px-3 py-1.5 text-xs font-medium text-red-400 transition-all hover:bg-red-500/30"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => handleJoinSession(jam.id, jam.private)}
+                          className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                            jam.private
+                              ? "bg-orange-500/20 text-orange-400 hover:bg-orange-500/30"
+                              : "bg-blue-500/20 text-blue-400 hover:bg-blue-500/30"
+                          }`}
+                        >
+                          Join
+                        </button>
+                      )}
                     </div>
-                    <div>
-                      <p className="text-sm font-medium text-white">JAM-ABC123XYZ</p>
-                      <p className="text-xs text-white/50">2 hours ago</p>
-                    </div>
-                  </div>
-                  <button className="rounded-lg bg-purple-500/20 px-3 py-1.5 text-xs font-medium text-purple-400 transition-all hover:bg-purple-500/30">
-                    Rejoin
-                  </button>
+                  ))}
                 </div>
-                <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 p-3.5 backdrop-blur-sm transition-all hover:bg-white/10">
-                  <div className="flex items-center gap-3">
-                    <div className="rounded-lg bg-purple-500/20 p-2">
-                      <Music className="text-purple-400" size={18} />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-white">JAM-DEF456ABC</p>
-                      <p className="text-xs text-white/50">Yesterday</p>
-                    </div>
-                  </div>
-                  <button className="rounded-lg bg-purple-500/20 px-3 py-1.5 text-xs font-medium text-purple-400 transition-all hover:bg-purple-500/30">
-                    Rejoin
-                  </button>
-                </div>
-              </div>
+              )}
             </div>
             </div>
 
             {/* Join Button - Fixed at bottom */}
-            <div className="shrink-0 border-t border-white/10 p-8 pt-6">
+            <div className="shrink-0 p-8 pt-6">
               <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
-                onClick={handleJoinSession}
+                onClick={() => handleJoinSession()}
                 disabled={!joinCode.trim()}
                 className="group relative w-full overflow-hidden rounded-2xl bg-linear-to-r from-blue-600 to-purple-600 px-8 py-4 text-lg font-semibold text-white shadow-2xl shadow-blue-500/30 transition-all hover:shadow-blue-500/50 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
               >
