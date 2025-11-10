@@ -12,11 +12,8 @@ import {
   Settings,
   Play,
   Pause,
-  Volume2,
-  Mic,
-  Video,
-  Monitor,
   Download,
+  Loader2,
 } from "lucide-react";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { QRCodeSVG } from "qrcode.react";
@@ -47,6 +44,16 @@ type SpotifyTrack = {
   };
 };
 
+type StageTrack = {
+  id: string;
+  name: string;
+  artists: string[];
+  albumName?: string;
+  imageUrl?: string;
+  spotifyUrl?: string;
+  spotifyTrackId?: string;
+};
+
 export default function HostPage() {
   const params = useParams();
   const router = useRouter();
@@ -57,15 +64,16 @@ export default function HostPage() {
   const [copied, setCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const qrRef = useRef<SVGSVGElement | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<SpotifyTrack[]>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [queuedTracks, setQueuedTracks] = useState<SpotifyTrack[]>([]);
-  const [addedTrackIds, setAddedTrackIds] = useState<Set<string>>(new Set());
+  const [queuedTracks, setQueuedTracks] = useState<StageTrack[]>([]);
+  const [addedTrackKeys, setAddedTrackKeys] = useState<Set<string>>(new Set());
+  const [addingTrackKeys, setAddingTrackKeys] = useState<string[]>([]);
+  const [addSongError, setAddSongError] = useState<string | null>(null);
 
   const participantLink = useMemo(
     () => `http://localhost:3000/jam/${jamId}/participant`,
@@ -89,9 +97,88 @@ export default function HostPage() {
     }
   }, [jamId]);
 
+  const fetchSongsForJam = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from("songs")
+        .select("id, song_name")
+        .eq("jam_id", jamId)
+        .eq("request", false);
+
+      if (error) throw error;
+
+      if (!data || data.length === 0) {
+        setQueuedTracks([]);
+        setAddedTrackKeys(new Set());
+        return;
+      }
+
+      const tracks: StageTrack[] = await Promise.all(
+        data.map(async (song) => {
+          const songName = song.song_name ?? "Untitled Song";
+
+          const baseTrack: StageTrack = {
+            id: song.id,
+            name: songName,
+            artists: [],
+          };
+
+          try {
+            const response = await fetch(
+              `/api/spotify/search?q=${encodeURIComponent(songName)}&limit=1`
+            );
+
+            if (!response.ok) {
+              throw new Error(`Spotify search failed with status ${response.status}`);
+            }
+
+            const payload = await response.json();
+            const match: SpotifyTrack | undefined = payload?.tracks?.items?.[0];
+
+            if (match) {
+              return {
+                id: song.id,
+                name: match.name ?? songName,
+                artists: match.artists?.map((artist) => artist.name) ?? [],
+                albumName: match.album?.name,
+                imageUrl: match.album?.images?.[0]?.url,
+                spotifyUrl: match.external_urls?.spotify,
+                spotifyTrackId: match.id,
+              };
+            }
+          } catch (spotifyError) {
+            console.error(
+              `Failed to hydrate song "${song.song_name}" with Spotify data:`,
+              spotifyError
+            );
+          }
+
+          return baseTrack;
+        })
+      );
+
+      setQueuedTracks(tracks);
+
+      const keys = new Set<string>();
+      tracks.forEach((track) => {
+        keys.add(track.id);
+        if (track.name) {
+          keys.add(track.name.trim().toLowerCase());
+        }
+        if (track.spotifyTrackId) {
+          keys.add(track.spotifyTrackId);
+        }
+      });
+      setAddedTrackKeys(keys);
+    } catch (error) {
+      console.error("Failed to fetch songs for jam:", error);
+    }
+  }, [jamId]);
+
   useEffect(() => {
     fetchJamSession();
-  }, [fetchJamSession]);
+    fetchSongsForJam();
+  }, [fetchJamSession, fetchSongsForJam]);
 
   const handleCopySessionId = () => {
     navigator.clipboard.writeText(jamId);
@@ -148,17 +235,65 @@ export default function HostPage() {
     }
   };
 
-  const handleAddTrackToJam = (track: SpotifyTrack) => {
-    if (addedTrackIds.has(track.id)) {
+  const handleAddTrackToJam = async (track: SpotifyTrack) => {
+    const nameKey = (track.name ?? "").trim().toLowerCase();
+    const trackKey = track.id ?? nameKey;
+
+    if (
+      addedTrackKeys.has(trackKey) ||
+      (nameKey && addedTrackKeys.has(nameKey)) ||
+      addingTrackKeys.includes(trackKey)
+    ) {
       return;
     }
 
-    setQueuedTracks((prev) => [...prev, track]);
-    setAddedTrackIds((prev) => {
-      const updated = new Set(prev);
-      updated.add(track.id);
-      return updated;
-    });
+    setAddSongError(null);
+    setAddingTrackKeys((prev) => [...prev, trackKey]);
+
+    try {
+      const { data, error } = await supabase
+        .from("songs")
+        .insert({
+          jam_id: jamId,
+          song_name: track.name,
+          request: false,
+        })
+        .select("id, song_name")
+        .single();
+
+      if (error) {
+        throw error;
+      }
+
+      const stageTrack: StageTrack = {
+        id: data.id,
+        name: data.song_name,
+        artists: track.artists?.map((artist) => artist.name) ?? [],
+        albumName: track.album?.name,
+        imageUrl: track.album?.images?.[0]?.url,
+        spotifyUrl: track.external_urls?.spotify,
+        spotifyTrackId: track.id,
+      };
+
+      setQueuedTracks((prev) => [...prev, stageTrack]);
+      setAddedTrackKeys((prev) => {
+        const updated = new Set(prev);
+        updated.add(trackKey);
+        if (nameKey) {
+          updated.add(nameKey);
+        }
+        updated.add(data.id);
+        if (track.id) {
+          updated.add(track.id);
+        }
+        return updated;
+      });
+    } catch (error) {
+      console.error("Failed to add song to jam:", error);
+      setAddSongError("Unable to add song to jam. Please try again.");
+    } finally {
+      setAddingTrackKeys((prev) => prev.filter((key) => key !== trackKey));
+    }
   };
 
   if (loading) {
@@ -367,7 +502,11 @@ export default function HostPage() {
                       searchResults.map((track) => {
                         const image = track.album?.images?.[0]?.url;
                         const artists = track.artists.map((artist) => artist.name).join(", ");
-                        const isAdded = addedTrackIds.has(track.id);
+                        const trackKey = track.id ?? track.name.trim().toLowerCase();
+                        const nameKey = track.name.trim().toLowerCase();
+                        const isAdded =
+                          addedTrackKeys.has(trackKey) || addedTrackKeys.has(nameKey);
+                        const isAdding = addingTrackKeys.includes(trackKey);
 
                         return (
                           <div
@@ -402,21 +541,37 @@ export default function HostPage() {
                             <button
                               type="button"
                               onClick={() => handleAddTrackToJam(track)}
-                              disabled={isAdded}
+                              disabled={isAdded || isAdding}
                               className={`flex h-10 w-10 items-center justify-center rounded-full border transition-colors ${
                                 isAdded
                                   ? "border-green-500/60 bg-green-500/20 text-green-300"
+                                  : isAdding
+                                  ? "border-blue-500/60 bg-blue-500/20 text-blue-200"
                                   : "border-purple-500/50 bg-purple-500/20 text-purple-100 hover:bg-purple-500/30"
                               } disabled:cursor-not-allowed`}
-                              title={isAdded ? "Added" : "Add to jam"}
+                              title={
+                                isAdded ? "Added" : isAdding ? "Adding..." : "Add to jam"
+                              }
                             >
-                              {isAdded ? <Check size={18} /> : <Plus size={18} />}
+                              {isAdded ? (
+                                <Check size={18} />
+                              ) : isAdding ? (
+                                <Loader2 size={18} className="animate-spin" />
+                              ) : (
+                                <Plus size={18} />
+                              )}
                             </button>
                           </div>
                         );
                       })
                     )}
                   </div>
+
+                  {addSongError && (
+                    <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
+                      {addSongError}
+                    </div>
+                  )}
                 </div>
 
               </div>
@@ -449,21 +604,49 @@ export default function HostPage() {
                       {queuedTracks.length} {queuedTracks.length === 1 ? "song" : "songs"} queued
                     </p>
                   </div>
-                  <div className="rounded-full bg-purple-500/20 px-4 py-1 text-sm font-medium text-purple-200">
-                    Live
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => {/* TODO: handle previous track */}}
+                      className="rounded-full border border-white/10 bg-white/5 p-2 text-white/70 transition-all hover:bg-white/10"
+                      title="Previous Track"
+                    >
+                      <span className="sr-only">Previous Track</span>
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 19V5m13.5 14L9 12l9.5-7" />
+                      </svg>
+                    </button>
+                    <motion.button
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => setIsPlaying(!isPlaying)}
+                      className="flex h-12 w-12 items-center justify-center rounded-full bg-linear-to-r from-purple-600 to-blue-600 text-white shadow-lg shadow-purple-500/50 transition-all hover:shadow-purple-500/70"
+                      title={isPlaying ? "Pause" : "Play"}
+                    >
+                      {isPlaying ? <Pause size={20} /> : <Play className="ml-0.5" size={20} />}
+                    </motion.button>
+                    <button
+                      onClick={() => {/* TODO: handle next track */}}
+                      className="rounded-full border border-white/10 bg-white/5 p-2 text-white/70 transition-all hover:bg-white/10"
+                      title="Next Track"
+                    >
+                      <span className="sr-only">Next Track</span>
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 5v14M5.5 5l9.5 7-9.5 7" />
+                      </svg>
+                    </button>
                   </div>
                 </div>
 
                 <div className="mt-4 flex-1 space-y-3 overflow-y-auto pr-2">
                   {queuedTracks.map((track) => (
                     <div
-                      key={`${track.id}-stage`}
+                      key={track.id}
                       className="flex items-center gap-4 rounded-2xl border border-white/10 bg-black/40 p-4 backdrop-blur"
                     >
                       <div className="h-16 w-16 overflow-hidden rounded-xl bg-white/10">
-                        {track.album?.images?.[0]?.url ? (
+                        {track.imageUrl ? (
                           <Image
-                            src={track.album.images[0].url}
+                            src={track.imageUrl}
                             alt={track.name}
                             width={64}
                             height={64}
@@ -480,16 +663,18 @@ export default function HostPage() {
                       <div className="flex flex-1 flex-col gap-1">
                         <p className="text-lg font-semibold text-white">{track.name}</p>
                         <p className="text-sm text-white/60">
-                          {track.artists.map((artist) => artist.name).join(", ")}
+                          {track.artists.length > 0
+                            ? track.artists.join(", ")
+                            : "Unknown Artist"}
                         </p>
                         <p className="text-xs uppercase tracking-wide text-white/30">
-                          {track.album?.name}
+                          {track.albumName ?? "Playlist Entry"}
                         </p>
                       </div>
 
-                      {track.external_urls?.spotify && (
+                      {track.spotifyUrl && (
                         <a
-                          href={track.external_urls.spotify}
+                          href={track.spotifyUrl}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/70 transition-all hover:bg-white/10"
@@ -504,51 +689,6 @@ export default function HostPage() {
             )}
           </div>
 
-          {/* Controls */}
-          <div className="rounded-3xl border border-white/10 bg-black/40 p-6 shadow-2xl backdrop-blur-xl">
-            <div className="flex items-center justify-center gap-4">
-              {/* Play/Pause */}
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => setIsPlaying(!isPlaying)}
-                className="flex h-16 w-16 items-center justify-center rounded-full bg-linear-to-r from-purple-600 to-blue-600 shadow-lg shadow-purple-500/50 transition-all hover:shadow-purple-500/70"
-              >
-                {isPlaying ? (
-                  <Pause className="text-white" size={28} />
-                ) : (
-                  <Play className="ml-1 text-white" size={28} />
-                )}
-              </motion.button>
-
-              {/* Mute */}
-              <button
-                onClick={() => setIsMuted(!isMuted)}
-                className={`rounded-xl border p-4 transition-all ${
-                  isMuted
-                    ? "border-red-500/50 bg-red-500/20"
-                    : "border-white/10 bg-white/5 hover:bg-white/10"
-                }`}
-              >
-                <Mic className={isMuted ? "text-red-400" : "text-white/80"} size={24} />
-              </button>
-
-              {/* Volume */}
-              <button className="rounded-xl border border-white/10 bg-white/5 p-4 transition-all hover:bg-white/10">
-                <Volume2 className="text-white/80" size={24} />
-              </button>
-
-              {/* Video */}
-              <button className="rounded-xl border border-white/10 bg-white/5 p-4 transition-all hover:bg-white/10">
-                <Video className="text-white/80" size={24} />
-              </button>
-
-              {/* Screen Share */}
-              <button className="rounded-xl border border-white/10 bg-white/5 p-4 transition-all hover:bg-white/10">
-                <Monitor className="text-white/80" size={24} />
-              </button>
-            </div>
-          </div>
         </div>
 
         {/* Right Panel - Session Info & Settings */}

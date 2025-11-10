@@ -46,6 +46,7 @@ async function getAccessToken(): Promise<string> {
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const query = searchParams.get("q");
+  const limit = searchParams.get("limit") ?? "10";
 
   if (!query) {
     return NextResponse.json({ error: "Missing search query" }, { status: 400 });
@@ -58,7 +59,7 @@ export async function GET(request: Request) {
       `https://api.spotify.com/v1/search?${new URLSearchParams({
         q: query,
         type: "track",
-        limit: "10",
+        limit,
       }).toString()}`,
       {
         headers: {
