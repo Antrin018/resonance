@@ -1,9 +1,9 @@
 "use client";
 
+import { Suspense, useState, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { ArrowLeft, Plus, Users, Music, ThumbsUp, Radio, UserCheck, Lock } from "lucide-react";
-import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase-client";
 
 type Jam = {
@@ -15,7 +15,7 @@ type Jam = {
   created_at: string;
 };
 
-export default function JamPage() {
+function JamPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const action = searchParams.get("action");
@@ -673,5 +673,19 @@ export default function JamPage() {
         )}
       </main>
     </div>
+  );
+}
+
+export default function JamPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-black text-white">
+          Loading jam experience...
+        </div>
+      }
+    >
+      <JamPageContent />
+    </Suspense>
   );
 }
