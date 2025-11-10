@@ -146,7 +146,8 @@ export default function HostPage() {
         .from("songs")
         .select("id, song_name, artist, lyrics, current")
         .eq("jam_id", jamId)
-        .eq("request", false);
+        .eq("request", false)
+        .order("id", { ascending: true });
 
       if (error) throw error;
 

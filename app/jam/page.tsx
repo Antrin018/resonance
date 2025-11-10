@@ -20,6 +20,7 @@ function JamPageContent() {
   const router = useRouter();
   const action = searchParams.get("action");
   const [joinCode, setJoinCode] = useState("");
+  const [participantName, setParticipantName] = useState("");
 
   // Create session form state
   const [jamName, setJamName] = useState("");
@@ -42,6 +43,8 @@ function JamPageContent() {
   const [availableJams, setAvailableJams] = useState<Jam[]>([]);
   const [loadingJams, setLoadingJams] = useState(false);
   const [pendingRequest, setPendingRequest] = useState<string | null>(null);
+  const [joining, setJoining] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
 
   // Fetch available jams when on join page
   useEffect(() => {
@@ -68,20 +71,57 @@ function JamPageContent() {
     }
   };
 
-  const handleJoinSession = (jamId?: string, isPrivateJam?: boolean) => {
+  const handleJoinSession = async (jamId?: string, isPrivateJam?: boolean) => {
     const sessionId = jamId || joinCode.trim();
+    const cleanName = participantName.trim();
 
-    if (!sessionId) return;
+    if (!sessionId || !cleanName || joining) return;
 
     if (isPrivateJam) {
-      // Show pending request message for private jams
       setPendingRequest(sessionId);
-      // TODO: Send join request to backend
       return;
     }
 
-    // Navigate to the session
-    router.push(`/jam/${sessionId}/participant`);
+    setJoining(true);
+    setJoinError(null);
+
+    try {
+      const { data: existingParticipant, error: fetchError } = await supabase
+        .from("participants")
+        .select("id")
+        .eq("jam_id", sessionId)
+        .ilike("name", cleanName)
+        .maybeSingle();
+
+      if (fetchError && fetchError.code !== "PGRST116") {
+        throw fetchError;
+      }
+
+      if (existingParticipant?.id) {
+        router.push(`/jam/${sessionId}/participant/${existingParticipant.id}`);
+        return;
+      }
+
+      const { data: inserted, error: insertError } = await supabase
+        .from("participants")
+        .insert({
+          jam_id: sessionId,
+          name: cleanName,
+        })
+        .select("id")
+        .single();
+
+      if (insertError) {
+        throw insertError;
+      }
+
+      router.push(`/jam/${sessionId}/participant/${inserted.id}`);
+    } catch (error) {
+      console.error("Failed to join session:", error);
+      setJoinError("Could not join the session. Please try again.");
+    } finally {
+      setJoining(false);
+    }
   };
 
   const handleCancelRequest = () => {
@@ -537,17 +577,35 @@ function JamPageContent() {
 
             {/* Join Code Input */}
             <div className="mb-8">
-              <label className="mb-2 block text-sm font-medium text-white/80">Session ID</label>
-              <input
-                type="text"
-                value={joinCode}
-                onChange={(e) => setJoinCode(e.target.value)}
-                placeholder="Enter session ID"
-                className="w-full rounded-xl border border-blue-500/40 bg-black px-4 py-3.5 font-mono text-lg text-white placeholder-zinc-500 backdrop-blur-xl transition-all focus:border-blue-500/50 focus:bg-black focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-              />
-              <p className="mt-2 text-sm text-white/50">
-                Ask the host for their session ID to join
-              </p>
+                <label className="mb-2 block text-sm font-medium text-white/80">
+                  Session ID
+                </label>
+                <input
+                  type="text"
+                  value={joinCode}
+                  onChange={(e) => setJoinCode(e.target.value)}
+                  placeholder="Enter session ID"
+                  className="w-full rounded-xl border border-blue-500/40 bg-black px-4 py-3.5 font-mono text-lg text-white placeholder-zinc-500 backdrop-blur-xl transition-all focus:border-blue-500/50 focus:bg-black focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                />
+                <p className="mt-2 text-sm text-white/50">
+                  Ask the host for their session ID to join
+                </p>
+              </div>
+
+              <div className="mb-8">
+                <label className="mb-2 block text-sm font-medium text-white/80">
+                  Your Name
+                </label>
+                <input
+                  type="text"
+                  value={participantName}
+                  onChange={(e) => setParticipantName(e.target.value)}
+                  placeholder="Enter your name"
+                  className="w-full rounded-xl border border-blue-500/40 bg-black px-4 py-3.5 text-white placeholder-zinc-500 backdrop-blur-xl transition-all focus:border-blue-500/50 focus:bg-black focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                />
+                <p className="mt-2 text-sm text-white/50">
+                  This is how you&apos;ll appear to the host and other participants
+                </p>
             </div>
 
             {/* Available Jams */}
@@ -580,7 +638,7 @@ function JamPageContent() {
                           </p>
                         </div>
                       </div>
-                      {pendingRequest === jam.id ? (
+              {pendingRequest === jam.id ? (
                         <div className="flex items-center gap-2">
                           <div className="rounded-lg bg-yellow-500/20 px-3 py-1.5 text-xs font-medium text-yellow-400">
                             Request Pending
@@ -594,7 +652,7 @@ function JamPageContent() {
                         </div>
                       ) : (
                         <button
-                          onClick={() => handleJoinSession(jam.id, jam.private)}
+                        onClick={() => handleJoinSession(jam.id, jam.private)}
                           className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
                             jam.private
                               ? "bg-orange-500/20 text-orange-400 hover:bg-orange-500/30"
@@ -617,7 +675,7 @@ function JamPageContent() {
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={() => handleJoinSession()}
-                disabled={!joinCode.trim()}
+                disabled={!joinCode.trim() || !participantName.trim() || joining}
                 className="group relative w-full overflow-hidden rounded-2xl bg-linear-to-r from-blue-600 to-purple-600 px-8 py-4 text-lg font-semibold text-white shadow-2xl shadow-blue-500/30 transition-all hover:shadow-blue-500/50 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
               >
                 <motion.div
@@ -625,9 +683,14 @@ function JamPageContent() {
                   initial={false}
                 />
                 <span className="relative flex items-center justify-center gap-2">
-                  Join Session as Participant
+                  {joining ? "Joining..." : "Join Session as Participant"}
                 </span>
               </motion.button>
+              {joinError && (
+                <p className="mt-4 text-sm text-red-400">
+                  {joinError}
+                </p>
+              )}
             </div>
           </motion.div>
         ) : (
