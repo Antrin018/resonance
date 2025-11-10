@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Plus, LogIn } from "lucide-react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 
 function createSeededRandom(seed: number) {
@@ -28,13 +28,19 @@ type Particle = {
 
 export default function Home() {
   const router = useRouter();
+  const [viewport, setViewport] = useState({ width: 1920, height: 1080 });
 
-  const { width, height } = useMemo(() => {
-    if (typeof window !== "undefined") {
-      return { width: window.innerWidth, height: window.innerHeight };
-    }
-    return { width: 1920, height: 1080 };
+  useEffect(() => {
+    const updateViewport = () => {
+      setViewport({ width: window.innerWidth, height: window.innerHeight });
+    };
+
+    updateViewport();
+    window.addEventListener("resize", updateViewport);
+    return () => window.removeEventListener("resize", updateViewport);
   }, []);
+
+  const { width, height } = viewport;
 
   const particles = useMemo<Particle[]>(() => {
     const random = createSeededRandom(123456);
