@@ -22,6 +22,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { supabase } from "@/lib/supabase-client";
 import Image from "next/image";
+import AudioVisualizer from "@/components/AudioVisualizer";
 
 type JamSession = {
   id: string;
@@ -1011,11 +1012,17 @@ export default function HostPage() {
         {/* Center Panel - Main Stage */}
         <div className="flex flex-1 flex-col gap-6">
           {/* Video/Audio Stage - Jam Setlist */}
-          <div className="flex-1 rounded-3xl border border-white/10 bg-linear-to-br from-white/5 via-black/70 to-white/5 p-6 shadow-2xl backdrop-blur-xl">
+          <div className="relative flex-1 overflow-hidden rounded-3xl border border-white/10 bg-black/40 shadow-2xl backdrop-blur-xl">
+             {/* Visualizer Background */}
+             <div className="absolute inset-0 z-0 opacity-60">
+                <AudioVisualizer isPlaying={isPlaying} />
+             </div>
+             
+             <div className="relative z-10 flex h-full flex-col p-6">
             {queuedTracks.length === 0 ? (
               <div className="flex h-full items-center justify-center text-center">
                 <div>
-                <div className="mb-4 inline-flex rounded-full bg-purple-500/20 p-8">
+                <div className="mb-4 inline-flex rounded-full bg-purple-500/20 p-8 backdrop-blur-md">
                   <Music className="text-purple-400" size={64} />
                 </div>
                 <h3 className="mb-2 text-2xl font-bold text-white">Ready to Jam</h3>
@@ -1196,6 +1203,7 @@ export default function HostPage() {
                 </div>
               </div>
             )}
+            </div>
           </div>
 
           {/* Song Requests Section */}

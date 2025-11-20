@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { ArrowLeft, Music, Loader2, Plus, Check, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase-client";
 import Image from "next/image";
+import AudioVisualizer from "@/components/AudioVisualizer";
 
 type JamSession = {
   id: string;
@@ -644,7 +645,13 @@ export default function ParticipantPage() {
 
         {/* Right Panel - Live Setlist */}
         <div className="flex flex-1 flex-col">
-          <div className="flex-1 rounded-3xl border border-white/10 bg-linear-to-br from-white/5 via-black/70 to-white/5 p-6 shadow-2xl backdrop-blur-xl">
+          <div className="relative flex-1 overflow-hidden rounded-3xl border border-white/10 bg-black/40 shadow-2xl backdrop-blur-xl">
+            {/* Visualizer Background */}
+            <div className="absolute inset-0 z-0 opacity-60">
+              <AudioVisualizer isPlaying={!!currentTrackId} />
+            </div>
+
+            <div className="relative z-10 flex h-full flex-col p-6">
             <div className="flex items-center justify-between border-b border-white/10 pb-4">
               <div>
                 <h3 className="text-xl font-semibold text-white">Live Setlist</h3>
@@ -730,6 +737,7 @@ export default function ParticipantPage() {
             </div>
           </div>
         </div>
+      </div>
       </main>
     </div>
   );
